@@ -38,7 +38,7 @@ function postsToRows(data) {
       created_at: p.created_time,
       message: (p.message || '').slice(0, 200),
       reach: Number(ins.post_media_view) || 0,
-      likes: Number(act.like) || 0,
+      likes: Number(act.like) || 0, // 注意：這是讚+心情等「所有反應」合計，非僅 👍（UI 文案請寫「反應」）
       comments: Number(act.comment) || 0,
       shares: Number(act.share) || 0,
     };
