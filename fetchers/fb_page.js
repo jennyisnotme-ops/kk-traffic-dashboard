@@ -1,11 +1,14 @@
 // fetchers/fb_page.js — 粉專每日成效 + 近期貼文 → traf_fb_*
-const { fbGet, insightDate } = require('../lib/meta');
+const { fbGet, insightDate, getPageToken } = require('../lib/meta');
 const { addDays } = require('../lib/dates');
 
+// 2025-11 Meta 淘汰 page_impressions_unique（reach）與 page_fans：
+// reach → page_media_view（Meta 將 reach/impressions 整併為 views，無 unique 版本）
+// fans_total → page_follows（追蹤者累計總數）
 const METRIC_MAP = {
-  page_impressions_unique: 'reach',
+  page_media_view: 'reach',
   page_post_engagements: 'engagement',
-  page_fans: 'fans_total',
+  page_follows: 'fans_total',
 };
 
 function insightsToDaily(data) {
@@ -22,20 +25,29 @@ function insightsToDaily(data) {
   return Object.values(byDate).sort((a, b) => (a.date < b.date ? -1 : 1));
 }
 
+// likes/comments summary 欄位需要 pages_read_user_content 權限（現有 token 沒有），
+// 改由 insights 取：post_media_view（reach，post_impressions_unique 已淘汰）、
+// post_activity_by_action_type（like/comment/share；like 含所有心情反應）
 function postsToRows(data) {
-  return (data || []).map(p => ({
-    post_id: p.id,
-    created_at: p.created_time,
-    message: (p.message || '').slice(0, 200),
-    reach: Number(p.insights?.data?.[0]?.values?.[0]?.value) || 0,
-    likes: p.likes?.summary?.total_count || 0,
-    comments: p.comments?.summary?.total_count || 0,
-    shares: p.shares?.count || 0,
-  }));
+  return (data || []).map(p => {
+    const ins = {};
+    for (const m of p.insights?.data || []) ins[m.name] = m.values?.[0]?.value;
+    const act = ins.post_activity_by_action_type || {};
+    return {
+      post_id: p.id,
+      created_at: p.created_time,
+      message: (p.message || '').slice(0, 200),
+      reach: Number(ins.post_media_view) || 0,
+      likes: Number(act.like) || 0,
+      comments: Number(act.comment) || 0,
+      shares: Number(act.share) || 0,
+    };
+  });
 }
 
 async function fetchFbPage(pool, from, to) {
   const pageId = process.env.META_PAGE_ID;
+  const token = await getPageToken(); // 粉專端點需要 Page Access Token
 
   // 1) 每日 insights（until 要多一天才含 to 當天）
   const insights = await fbGet(`${pageId}/insights`, {
@@ -43,7 +55,7 @@ async function fetchFbPage(pool, from, to) {
     period: 'day',
     since: from,
     until: addDays(to, 1),
-  });
+  }, token);
   const daily = insightsToDaily(insights.data).filter(d => d.date >= from && d.date <= to);
   for (const d of daily) {
     await pool.query(
@@ -64,10 +76,10 @@ async function fetchFbPage(pool, from, to) {
 
   // 3) 近 25 篇貼文成效（UPSERT，成效持續更新）
   const posts = await fbGet(`${pageId}/posts`, {
-    fields: 'id,created_time,message,likes.summary(true).limit(0),' +
-            'comments.summary(true).limit(0),shares,insights.metric(post_impressions_unique)',
+    fields: 'id,created_time,message,' +
+            'insights.metric(post_media_view,post_activity_by_action_type)',
     limit: 25,
-  });
+  }, token);
   const rows = postsToRows(posts.data);
   for (const r of rows) {
     await pool.query(
