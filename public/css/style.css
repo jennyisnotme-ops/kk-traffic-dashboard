@@ -1,0 +1,57 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Microsoft JhengHei', system-ui, sans-serif; background: #f4f6f8; color: #263238; }
+
+/* 登入層 */
+#login-overlay { position: fixed; inset: 0; background: #263238; display: flex;
+  align-items: center; justify-content: center; z-index: 100; }
+#login-form { background: #fff; padding: 40px; border-radius: 12px; width: 320px;
+  display: flex; flex-direction: column; gap: 14px; }
+#login-form h1 { font-size: 20px; text-align: center; }
+#login-form input { padding: 10px; border: 1px solid #b0bec5; border-radius: 8px; font-size: 15px; }
+#login-form button { padding: 10px; border: 0; border-radius: 8px; background: #1565c0;
+  color: #fff; font-size: 15px; cursor: pointer; }
+#login-error { color: #c62828; font-size: 13px; text-align: center; min-height: 1em; }
+
+/* Header */
+header { background: #fff; border-bottom: 1px solid #e0e0e0; padding: 12px 20px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  position: sticky; top: 0; z-index: 10; }
+header h1 { font-size: 17px; margin-right: 8px; }
+#tabs button, #date-controls button {
+  padding: 6px 14px; border: 1px solid #cfd8dc; border-radius: 16px;
+  background: #fff; cursor: pointer; font-size: 13px; }
+#tabs button.active { background: #1565c0; color: #fff; border-color: #1565c0; }
+#date-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+#date-controls button.active { background: #e3f2fd; border-color: #1565c0; color: #1565c0; }
+#date-controls input[type=date] { padding: 5px; border: 1px solid #cfd8dc; border-radius: 8px; }
+#status-bar { margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 12px; color: #607d8b; }
+#status-bar .warn { color: #c62828; font-weight: bold; }
+#status-bar button { padding: 5px 12px; border: 1px solid #cfd8dc; border-radius: 14px;
+  background: #fff; cursor: pointer; }
+
+/* 卡片網格 */
+main { padding: 20px; }
+.tab { display: none; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 16px; }
+.tab.active { display: grid; }
+.card { background: #fff; border-radius: 12px; padding: 16px;
+  box-shadow: 0 1px 4px rgba(38,50,56,.08); min-height: 120px; }
+.card.wide { grid-column: 1 / -1; }
+.card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.card-head h2 { font-size: 15px; }
+.type-switch button { border: 1px solid #cfd8dc; background: #fff; cursor: pointer;
+  padding: 3px 10px; font-size: 12px; }
+.type-switch button:first-child { border-radius: 12px 0 0 12px; }
+.type-switch button:last-child { border-radius: 0 12px 12px 0; }
+.type-switch button.active { background: #1565c0; color: #fff; border-color: #1565c0; }
+.card canvas { max-height: 280px; }
+
+/* KPI 卡 */
+.kpi { display: flex; flex-direction: column; gap: 4px; justify-content: center; }
+.kpi .kpi-value { font-size: 30px; font-weight: bold; color: #1565c0; }
+.kpi .kpi-label { font-size: 13px; color: #607d8b; }
+
+/* 表格卡 */
+.card table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.card th, .card td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eceff1; }
+.card th { color: #607d8b; font-weight: normal; }
+.card td.num, .card th.num { text-align: right; font-variant-numeric: tabular-nums; }
