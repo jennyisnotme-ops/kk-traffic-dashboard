@@ -64,19 +64,28 @@ app.post('/api/login', async (req, res) => {
 });
 
 // 手動重抓（預設 D-3 ~ D-1；可帶 {from, to} 指定區間）
+// Express 4 不會自動處理 async handler 的 rejection，須自行 try/catch
 app.post('/api/refetch', requireAuth, async (req, res) => {
-  const range = (req.body?.from && req.body?.to)
-    ? { from: req.body.from, to: req.body.to }
-    : defaultRange();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(range.from) || !/^\d{4}-\d{2}-\d{2}$/.test(range.to)) {
-    return res.status(400).json({ error: '日期格式須為 YYYY-MM-DD' });
+  try {
+    const range = (req.body?.from && req.body?.to)
+      ? { from: req.body.from, to: req.body.to }
+      : defaultRange();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(range.from) || !/^\d{4}-\d{2}-\d{2}$/.test(range.to)) {
+      return res.status(400).json({ error: '日期格式須為 YYYY-MM-DD' });
+    }
+    res.json(await runAll(pool, range.from, range.to));
+  } catch (err) {
+    res.status(500).json({ error: err?.message || String(err) });
   }
-  res.json(await runAll(pool, range.from, range.to));
 });
 
 // 一次性歷史回補（上線時執行一次；重複執行只是重複 UPSERT，無害但耗時）
 app.post('/api/backfill', requireAuth, async (req, res) => {
-  res.json(await backfill(pool));
+  try {
+    res.json(await backfill(pool));
+  } catch (err) {
+    res.status(500).json({ error: err?.message || String(err) });
+  }
 });
 
 const PORT = process.env.PORT || 3000;

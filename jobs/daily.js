@@ -12,10 +12,15 @@ const SOURCES = [
 ];
 
 async function logFetch(pool, source, from, to, status, error) {
-  await pool.query(
-    `INSERT INTO traf_fetch_log (source, date_from, date_to, status, error)
-     VALUES ($1,$2,$3,$4,$5)`,
-    [source, from, to, status, error ? String(error).slice(0, 500) : null]);
+  try {
+    await pool.query(
+      `INSERT INTO traf_fetch_log (source, date_from, date_to, status, error)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [source, from, to, status, error ? String(error).slice(0, 500) : null]);
+  } catch (e) {
+    // 寫 log 失敗不可中斷抓取流程或 cron
+    console.error('[fetch_log] 寫入失敗:', e.message);
+  }
 }
 
 async function runAll(pool, from, to) {
@@ -26,9 +31,10 @@ async function runAll(pool, from, to) {
       await logFetch(pool, name, from, to, 'ok', null);
       results[name] = { ok: true, ...summary };
     } catch (err) {
-      console.error(`[fetch:${name}] ${err.message}`);
-      await logFetch(pool, name, from, to, 'error', err.message);
-      results[name] = { ok: false, error: err.message };
+      const msg = err?.message || String(err);
+      console.error(`[fetch:${name}] ${msg}`);
+      await logFetch(pool, name, from, to, 'error', msg);
+      results[name] = { ok: false, error: msg };
     }
   }
   return results;
@@ -42,9 +48,14 @@ function defaultRange() {
 
 function scheduleDaily(pool) {
   cron.schedule('0 8 * * *', async () => {
-    const { from, to } = defaultRange();
-    console.log(`[cron] 每日抓取 ${from} ~ ${to}`);
-    await runAll(pool, from, to);
+    try {
+      const { from, to } = defaultRange();
+      console.log(`[cron] 每日抓取 ${from} ~ ${to}`);
+      await runAll(pool, from, to);
+    } catch (err) {
+      // 排程路徑不可洩漏 unhandled rejection
+      console.error('[cron] 每日抓取失敗:', err);
+    }
   }, { timezone: 'Asia/Taipei' });
   console.log('排程已啟動：每天 08:00 (Asia/Taipei)');
 }
@@ -64,8 +75,9 @@ async function backfill(pool) {
       await logFetch(pool, name, from, to, 'ok', null);
       results[name] = { ok: true, from, to, ...summary };
     } catch (err) {
-      await logFetch(pool, name, from, to, 'error', err.message);
-      results[name] = { ok: false, from, to, error: err.message };
+      const msg = err?.message || String(err);
+      await logFetch(pool, name, from, to, 'error', msg);
+      results[name] = { ok: false, from, to, error: msg };
     }
   }
   return results;
