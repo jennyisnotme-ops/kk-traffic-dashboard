@@ -25,6 +25,17 @@ async function initDB() {
   const sql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
   await pool.query(sql);
   console.log('資料庫初始化完成');
+
+  // 首次啟動：建立預設管理員
+  const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM traf_users');
+  if (rows[0].n === 0) {
+    const bcrypt = require('bcryptjs');
+    const secret = process.env.INIT_ADMIN_SECRET;
+    if (!secret) throw new Error('traf_users 為空且未設定 INIT_ADMIN_SECRET');
+    const hash = await bcrypt.hash(secret, 10);
+    await pool.query('INSERT INTO traf_users (name, secret) VALUES ($1,$2)', ['admin', hash]);
+    console.log('已建立預設管理員 admin');
+  }
 }
 
 app.use(express.static(path.join(__dirname, 'public'), {
@@ -40,6 +51,15 @@ app.get('/health', async (req, res) => {
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
+});
+
+const { requireAuth, findUser, getSecret } = require('./lib/auth');
+
+// 登入驗證：前端用來確認密碼正確，之後每個請求都帶同一個 Bearer secret
+app.post('/api/login', async (req, res) => {
+  const user = await findUser(String(req.body?.secret || ''));
+  if (!user) return res.status(401).json({ error: '密碼錯誤' });
+  res.json({ ok: true, name: user.name });
 });
 
 const PORT = process.env.PORT || 3000;
