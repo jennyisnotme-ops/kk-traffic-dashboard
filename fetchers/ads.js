@@ -1,5 +1,5 @@
 // fetchers/ads.js — Marketing API 廣告成效（campaign × 日）→ traf_ads_daily
-const { fbGet, GRAPH } = require('../lib/meta');
+const { fbGet } = require('../lib/meta');
 
 // 轉換數：電商優先 omni_purchase → purchase → lead；raw actions 另存 JSONB 供日後改定義
 const CONVERSION_PRIORITY = ['omni_purchase', 'purchase', 'lead'];
@@ -34,7 +34,9 @@ async function fetchAds(pool, from, to) {
     limit: 500,
   });
 
+  const MAX_PAGES = 100; // 防呆：避免 paging.next 異常時無限迴圈
   let count = 0;
+  let pages = 0;
   while (true) {
     for (const r of insightRowsToRows(json.data)) {
       await pool.query(
@@ -49,8 +51,15 @@ async function fetchAds(pool, from, to) {
     }
     const next = json.paging?.next;
     if (!next) break;
+    if (++pages > MAX_PAGES) throw new Error('Graph API paging: 超過最大分頁數');
+    // 注意：next URL 含 access_token，錯誤訊息一律不可帶入 URL
     const res = await fetch(next);              // next 已含 token 與所有參數
-    json = await res.json();
+    if (!res.ok) throw new Error(`Graph API paging: HTTP ${res.status}`);
+    try {
+      json = await res.json();
+    } catch (_) {
+      throw new Error('Graph API paging: 非 JSON 回應');
+    }
     if (json.error) throw new Error(`Graph API paging: ${json.error.message}`);
   }
   return { rows: count };
