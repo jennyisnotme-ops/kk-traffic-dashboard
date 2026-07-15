@@ -2,6 +2,9 @@
 (function () {
   const charts = {};   // id → Chart instance
 
+  const esc = v => String(v ?? '').replace(/[&<>"']/g,
+    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
   const TYPE_LABEL = { line: '折線', smooth: '曲線', bar: '長條', pie: '圓餅' };
 
   function prefKey(id) { return `traf_chart_type_${id}`; }
@@ -43,7 +46,7 @@
 
     const head = document.createElement('div');
     head.className = 'card-head';
-    head.innerHTML = `<h2>${title}</h2>`;
+    head.innerHTML = `<h2>${esc(title)}</h2>`;
     const sw = document.createElement('div');
     sw.className = 'type-switch';
     for (const t of types) {
@@ -74,7 +77,7 @@
   function kpiCard({ el, label, value }) {
     const card = document.createElement('div');
     card.className = 'card kpi';
-    card.innerHTML = `<div class="kpi-value">${value}</div><div class="kpi-label">${label}</div>`;
+    card.innerHTML = `<div class="kpi-value">${esc(value)}</div><div class="kpi-label">${esc(label)}</div>`;
     el.appendChild(card);
   }
 
@@ -82,13 +85,13 @@
   function tableCard({ title, el, columns, rows, wide }) {
     const card = document.createElement('div');
     card.className = 'card' + (wide ? ' wide' : '');
-    const ths = columns.map(c => `<th class="${c.num ? 'num' : ''}">${c.label}</th>`).join('');
+    const ths = columns.map(c => `<th class="${c.num ? 'num' : ''}">${esc(c.label)}</th>`).join('');
     const trs = rows.map(r =>
       `<tr>${columns.map(c => {
         const v = c.format ? c.format(r[c.key]) : r[c.key];
-        return `<td class="${c.num ? 'num' : ''}">${v ?? ''}</td>`;
+        return `<td class="${c.num ? 'num' : ''}">${esc(v)}</td>`;
       }).join('')}</tr>`).join('');
-    card.innerHTML = `<div class="card-head"><h2>${title}</h2></div>
+    card.innerHTML = `<div class="card-head"><h2>${esc(title)}</h2></div>
       <table><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
     el.appendChild(card);
   }
