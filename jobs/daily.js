@@ -11,6 +11,9 @@ const SOURCES = [
   ['ads', fetchAds],
 ];
 
+// 併發鎖：避免手動重抓/回補與 cron 或彼此重疊執行造成 UPSERT 競爭
+let running = false;
+
 async function logFetch(pool, source, from, to, status, error) {
   try {
     await pool.query(
@@ -24,20 +27,26 @@ async function logFetch(pool, source, from, to, status, error) {
 }
 
 async function runAll(pool, from, to) {
-  const results = {};
-  for (const [name, fn] of SOURCES) {
-    try {
-      const summary = await fn(pool, from, to);
-      await logFetch(pool, name, from, to, 'ok', null);
-      results[name] = { ok: true, ...summary };
-    } catch (err) {
-      const msg = err?.message || String(err);
-      console.error(`[fetch:${name}] ${msg}`);
-      await logFetch(pool, name, from, to, 'error', msg);
-      results[name] = { ok: false, error: msg };
+  if (running) throw new Error('抓取已在執行中，請稍後再試');
+  running = true;
+  try {
+    const results = {};
+    for (const [name, fn] of SOURCES) {
+      try {
+        const summary = await fn(pool, from, to);
+        await logFetch(pool, name, from, to, 'ok', null);
+        results[name] = { ok: true, ...summary };
+      } catch (err) {
+        const msg = err?.message || String(err);
+        console.error(`[fetch:${name}] ${msg}`);
+        await logFetch(pool, name, from, to, 'error', msg);
+        results[name] = { ok: false, error: msg };
+      }
     }
+    return results;
+  } finally {
+    running = false;
   }
-  return results;
 }
 
 // 每日抓 D-3 ~ D-1：GA 要 24–48h 才處理完整、廣告有歸因回填，重抓覆蓋
@@ -51,6 +60,8 @@ function scheduleDaily(pool) {
     try {
       const { from, to } = defaultRange();
       console.log(`[cron] 每日抓取 ${from} ~ ${to}`);
+      // 注意：若 08:00 當下剛好有手動重抓/回補在跑，runAll 會擲出「抓取已在執行中」，
+      // 此處 catch 會記錄 console.error 並跳過本次排程，屬可接受的行為（不重試、不中斷 process）
       await runAll(pool, from, to);
     } catch (err) {
       // 排程路徑不可洩漏 unhandled rejection
@@ -62,25 +73,31 @@ function scheduleDaily(pool) {
 
 // 一次性回補：各源用自己的 API 回溯上限
 async function backfill(pool) {
-  const to = addDays(taipeiToday(), -1);
-  const plans = [
-    ['ga', fetchGa, addDays(to, -364)],
-    ['fb_page', fetchFbPage, addDays(to, -88)],   // 粉專 insights 約 90 天上限
-    ['ads', fetchAds, addDays(to, -364)],
-  ];
-  const results = {};
-  for (const [name, fn, from] of plans) {
-    try {
-      const summary = await fn(pool, from, to);
-      await logFetch(pool, name, from, to, 'ok', null);
-      results[name] = { ok: true, from, to, ...summary };
-    } catch (err) {
-      const msg = err?.message || String(err);
-      await logFetch(pool, name, from, to, 'error', msg);
-      results[name] = { ok: false, from, to, error: msg };
+  if (running) throw new Error('抓取已在執行中，請稍後再試');
+  running = true;
+  try {
+    const to = addDays(taipeiToday(), -1);
+    const plans = [
+      ['ga', fetchGa, addDays(to, -364)],
+      ['fb_page', fetchFbPage, addDays(to, -88)],   // 粉專 insights 約 90 天上限
+      ['ads', fetchAds, addDays(to, -364)],
+    ];
+    const results = {};
+    for (const [name, fn, from] of plans) {
+      try {
+        const summary = await fn(pool, from, to);
+        await logFetch(pool, name, from, to, 'ok', null);
+        results[name] = { ok: true, from, to, ...summary };
+      } catch (err) {
+        const msg = err?.message || String(err);
+        await logFetch(pool, name, from, to, 'error', msg);
+        results[name] = { ok: false, from, to, error: msg };
+      }
     }
+    return results;
+  } finally {
+    running = false;
   }
-  return results;
 }
 
 module.exports = { runAll, scheduleDaily, backfill, defaultRange };

@@ -7,6 +7,9 @@ const rateLimit = require('express-rate-limit');
 const { pool } = require('./lib/db');
 
 const app = express();
+// Zeabur 反向代理之後：express-rate-limit 需以 X-Forwarded-For 判斷來源 IP，
+// 而非代理本身的 socket IP，否則所有請求會被視為同一來源
+app.set('trust proxy', 1);
 
 app.use(helmet({
   contentSecurityPolicy: false,   // 前端 inline JS
@@ -116,6 +119,9 @@ app.post('/api/refetch', requireAuth, async (req, res) => {
     }
     res.json(await runAll(pool, range.from, range.to));
   } catch (err) {
+    if (err?.message === '抓取已在執行中，請稍後再試') {
+      return res.status(409).json({ error: err.message });
+    }
     res.status(500).json({ error: err?.message || String(err) });
   }
 });
@@ -125,6 +131,9 @@ app.post('/api/backfill', requireAuth, async (req, res) => {
   try {
     res.json(await backfill(pool));
   } catch (err) {
+    if (err?.message === '抓取已在執行中，請稍後再試') {
+      return res.status(409).json({ error: err.message });
+    }
     res.status(500).json({ error: err?.message || String(err) });
   }
 });
