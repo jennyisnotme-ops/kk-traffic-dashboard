@@ -1,3 +1,4 @@
 node_modules/
 .env
 kk-traffic-dashboard-*.json
+.claude/
