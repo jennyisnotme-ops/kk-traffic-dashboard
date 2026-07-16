@@ -57,6 +57,8 @@ app.get('/health', async (req, res) => {
 
 const { requireAuth, findUser } = require('./lib/auth');
 const { runAll, scheduleDaily, backfill } = require('./jobs/daily');
+const XLSX = require('xlsx');
+const { validateExportPayload } = require('./lib/validators');
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -93,7 +95,13 @@ app.get('/api/data', requireAuth, async (req, res) => {
              FROM traf_ga_events WHERE date BETWEEN $1 AND $2
             GROUP BY event_name ORDER BY count DESC`, [from, to]),
         pool.query('SELECT * FROM traf_fb_page_daily WHERE date BETWEEN $1 AND $2 ORDER BY date', [from, to]),
-        pool.query('SELECT * FROM traf_fb_posts ORDER BY created_at DESC LIMIT 20'),
+        (DATE_RE.test(req.query.posts_from || '') && DATE_RE.test(req.query.posts_to || ''))
+          ? pool.query(
+              `SELECT * FROM traf_fb_posts
+                WHERE (created_at AT TIME ZONE 'Asia/Taipei')::date BETWEEN $1 AND $2
+                ORDER BY created_at DESC LIMIT 100`,
+              [req.query.posts_from, req.query.posts_to])
+          : pool.query('SELECT * FROM traf_fb_posts ORDER BY created_at DESC LIMIT 20'),
         pool.query('SELECT * FROM traf_ads_daily WHERE date BETWEEN $1 AND $2 ORDER BY date', [from, to]),
         pool.query(
           `SELECT DISTINCT ON (source) source, fetched_at, status, error
@@ -112,6 +120,25 @@ app.get('/api/data', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('[api/data]', err);
     res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
+// 匯出 Excel：前端組好表頭與列，後端只負責產檔
+app.post('/api/export', requireAuth, (req, res) => {
+  const v = validateExportPayload(req.body);
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  try {
+    const safeName = String(req.body.filename).replace(/[^\w一-鿿-]/g, '_').slice(0, 60) || 'export';
+    const ws = XLSX.utils.aoa_to_sheet([req.body.headers, ...req.body.rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'data');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(safeName)}.xlsx`);
+    res.send(buf);
+  } catch (err) {
+    console.error('[api/export]', err);
+    res.status(500).json({ error: '匯出失敗' });
   }
 });
 
