@@ -12,7 +12,6 @@ const app = express();
 app.set('trust proxy', 1);
 
 app.use(helmet({
-  contentSecurityPolicy: false,   // 前端 inline JS
   strictTransportSecurity: { maxAge: 63072000, includeSubDomains: true, preload: true },
 }));
 app.use(express.json({ limit: '1mb' }));
@@ -52,15 +51,23 @@ app.get('/health', async (req, res) => {
     await pool.query('SELECT 1');
     res.json({ ok: true, time: new Date().toISOString() });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    res.status(500).json({ ok: false });
   }
 });
 
-const { requireAuth, findUser, getSecret } = require('./lib/auth');
-const { runAll, scheduleDaily, backfill, defaultRange } = require('./jobs/daily');
+const { requireAuth, findUser } = require('./lib/auth');
+const { runAll, scheduleDaily, backfill } = require('./jobs/daily');
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+const loginLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 10,
+  standardHeaders: true, legacyHeaders: false,
+  message: { error: '登入嘗試過於頻繁，請稍後再試' },
+});
 
 // 登入驗證：前端用來確認密碼正確，之後每個請求都帶同一個 Bearer secret
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', loginLimiter, async (req, res) => {
   const user = await findUser(String(req.body?.secret || ''));
   if (!user) return res.status(401).json({ error: '密碼錯誤' });
   res.json({ ok: true, name: user.name });
@@ -69,7 +76,7 @@ app.post('/api/login', async (req, res) => {
 // 儀表板資料：一次回傳指定區間的全部數據
 app.get('/api/data', requireAuth, async (req, res) => {
   const { from, to } = req.query;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(from || '') || !/^\d{4}-\d{2}-\d{2}$/.test(to || '')) {
+  if (!DATE_RE.test(from || '') || !DATE_RE.test(to || '')) {
     return res.status(400).json({ error: '需要 from/to（YYYY-MM-DD）' });
   }
   try {
@@ -103,21 +110,23 @@ app.get('/api/data', requireAuth, async (req, res) => {
       fetch_status: fetchStatus.rows,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[api/data]', err);
+    res.status(500).json({ error: '伺服器錯誤' });
   }
 });
 
-// 手動重抓（預設 D-3 ~ D-1；可帶 {from, to} 指定區間）
+// 手動重抓（無 body 時各源用自己的預設窗；可帶 {from, to} 指定區間）
 // Express 4 不會自動處理 async handler 的 rejection，須自行 try/catch
 app.post('/api/refetch', requireAuth, async (req, res) => {
   try {
-    const range = (req.body?.from && req.body?.to)
-      ? { from: req.body.from, to: req.body.to }
-      : defaultRange();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(range.from) || !/^\d{4}-\d{2}-\d{2}$/.test(range.to)) {
-      return res.status(400).json({ error: '日期格式須為 YYYY-MM-DD' });
+    if (req.body?.from && req.body?.to) {
+      if (!DATE_RE.test(req.body.from) || !DATE_RE.test(req.body.to)) {
+        return res.status(400).json({ error: '日期格式須為 YYYY-MM-DD' });
+      }
+      res.json(await runAll(pool, req.body.from, req.body.to));
+    } else {
+      res.json(await runAll(pool));
     }
-    res.json(await runAll(pool, range.from, range.to));
   } catch (err) {
     if (err?.message === '抓取已在執行中，請稍後再試') {
       return res.status(409).json({ error: err.message });

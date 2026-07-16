@@ -6,9 +6,9 @@ const { fetchAds } = require('../fetchers/ads');
 const { taipeiToday, addDays } = require('../lib/dates');
 
 const SOURCES = [
-  ['ga', fetchGa],
-  ['fb_page', fetchFbPage],
-  ['ads', fetchAds],
+  ['ga', fetchGa, 3],
+  ['fb_page', fetchFbPage, 3],
+  ['ads', fetchAds, 7],   // 廣告 7 天點擊歸因會回填轉換數，D-3 會永久低估
 ];
 
 // 併發鎖：避免手動重抓/回補與 cron 或彼此重疊執行造成 UPSERT 競爭
@@ -26,43 +26,37 @@ async function logFetch(pool, source, from, to, status, error) {
   }
 }
 
-async function runAll(pool, from, to) {
+async function runAll(pool, from = null, to = null) {
   if (running) throw new Error('抓取已在執行中，請稍後再試');
   running = true;
   try {
     const results = {};
-    for (const [name, fn] of SOURCES) {
+    const defaultTo = addDays(taipeiToday(), -1);
+    for (const [name, fn, daysBack] of SOURCES) {
+      const f = from || addDays(defaultTo, -(daysBack - 1));
+      const t = to || defaultTo;
       try {
-        const summary = await fn(pool, from, to);
-        await logFetch(pool, name, from, to, 'ok', null);
+        const summary = await fn(pool, f, t);
+        await logFetch(pool, name, f, t, 'ok', null);
         results[name] = { ok: true, ...summary };
       } catch (err) {
         const msg = err?.message || String(err);
         console.error(`[fetch:${name}] ${msg}`);
-        await logFetch(pool, name, from, to, 'error', msg);
+        await logFetch(pool, name, f, t, 'error', msg);
         results[name] = { ok: false, error: msg };
       }
     }
     return results;
-  } finally {
-    running = false;
-  }
-}
-
-// 每日抓 D-3 ~ D-1：GA 要 24–48h 才處理完整、廣告有歸因回填，重抓覆蓋
-function defaultRange() {
-  const today = taipeiToday();
-  return { from: addDays(today, -3), to: addDays(today, -1) };
+  } finally { running = false; }
 }
 
 function scheduleDaily(pool) {
   cron.schedule('0 8 * * *', async () => {
     try {
-      const { from, to } = defaultRange();
-      console.log(`[cron] 每日抓取 ${from} ~ ${to}`);
+      console.log('[cron] 每日抓取（各源預設窗）');
       // 注意：若 08:00 當下剛好有手動重抓/回補在跑，runAll 會擲出「抓取已在執行中」，
       // 此處 catch 會記錄 console.error 並跳過本次排程，屬可接受的行為（不重試、不中斷 process）
-      await runAll(pool, from, to);
+      await runAll(pool);
     } catch (err) {
       // 排程路徑不可洩漏 unhandled rejection
       console.error('[cron] 每日抓取失敗:', err);
@@ -100,4 +94,4 @@ async function backfill(pool) {
   }
 }
 
-module.exports = { runAll, scheduleDaily, backfill, defaultRange };
+module.exports = { runAll, scheduleDaily, backfill };

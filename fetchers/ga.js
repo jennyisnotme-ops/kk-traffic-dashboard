@@ -4,6 +4,9 @@ const { BetaAnalyticsDataClient } = require('@google-analytics/data');
 let _client = null;
 function client() {
   if (!_client) {
+    if (!process.env.GA_SERVICE_ACCOUNT_JSON) {
+      throw new Error('缺少環境變數 GA_SERVICE_ACCOUNT_JSON');
+    }
     const credentials = JSON.parse(
       Buffer.from(process.env.GA_SERVICE_ACCOUNT_JSON, 'base64').toString('utf8'));
     _client = new BetaAnalyticsDataClient({ credentials });

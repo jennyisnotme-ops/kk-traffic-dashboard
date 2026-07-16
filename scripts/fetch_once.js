@@ -4,13 +4,18 @@ require('dotenv').config();
 const { pool } = require('../lib/db');
 const { taipeiToday, addDays } = require('../lib/dates');
 
+function tryRequire(path) {
+  try { return require(path); }
+  catch (e) { if (e.code === 'MODULE_NOT_FOUND') return null; throw e; }
+}
+
 async function main() {
   const [source = 'all', from = addDays(taipeiToday(), -3), to = addDays(taipeiToday(), -1)] =
     process.argv.slice(2);
   const fetchers = {};
-  try { fetchers.ga = require('../fetchers/ga').fetchGa; } catch (_) {}
-  try { fetchers.fb_page = require('../fetchers/fb_page').fetchFbPage; } catch (_) {}
-  try { fetchers.ads = require('../fetchers/ads').fetchAds; } catch (_) {}
+  fetchers.ga = tryRequire('../fetchers/ga')?.fetchGa;
+  fetchers.fb_page = tryRequire('../fetchers/fb_page')?.fetchFbPage;
+  fetchers.ads = tryRequire('../fetchers/ads')?.fetchAds;
 
   const targets = source === 'all' ? Object.keys(fetchers) : [source];
   for (const name of targets) {
