@@ -76,3 +76,11 @@ CREATE TABLE IF NOT EXISTS traf_fetch_log (
   status     TEXT NOT NULL,          -- 'ok' | 'error'
   error      TEXT
 );
+
+CREATE TABLE IF NOT EXISTS traf_reports (
+  id         SERIAL PRIMARY KEY,
+  name       TEXT NOT NULL,
+  config     JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

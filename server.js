@@ -58,7 +58,7 @@ app.get('/health', async (req, res) => {
 const { requireAuth, findUser } = require('./lib/auth');
 const { runAll, scheduleDaily, backfill } = require('./jobs/daily');
 const XLSX = require('xlsx');
-const { validateExportPayload } = require('./lib/validators');
+const { validateExportPayload, validateReportConfig } = require('./lib/validators');
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -140,6 +140,55 @@ app.post('/api/export', requireAuth, (req, res) => {
     console.error('[api/export]', err);
     res.status(500).json({ error: '匯出失敗' });
   }
+});
+
+function validReportName(name) {
+  return typeof name === 'string' && name.trim().length >= 1 && name.trim().length <= 50;
+}
+
+app.get('/api/reports', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM traf_reports ORDER BY id');
+    res.json({ reports: rows });
+  } catch (err) { console.error('[api/reports]', err); res.status(500).json({ error: '伺服器錯誤' }); }
+});
+
+app.post('/api/reports', requireAuth, async (req, res) => {
+  const { name, config } = req.body || {};
+  if (!validReportName(name)) return res.status(400).json({ error: '名稱需為 1–50 字' });
+  const v = validateReportConfig(config);
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  try {
+    const { rows } = await pool.query(
+      'INSERT INTO traf_reports (name, config) VALUES ($1, $2) RETURNING *',
+      [name.trim(), JSON.stringify(config)]);
+    res.json({ report: rows[0] });
+  } catch (err) { console.error('[api/reports]', err); res.status(500).json({ error: '伺服器錯誤' }); }
+});
+
+app.put('/api/reports/:id', requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'id 不合法' });
+  const { name, config } = req.body || {};
+  if (!validReportName(name)) return res.status(400).json({ error: '名稱需為 1–50 字' });
+  const v = validateReportConfig(config);
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  try {
+    const { rows } = await pool.query(
+      'UPDATE traf_reports SET name=$1, config=$2, updated_at=now() WHERE id=$3 RETURNING *',
+      [name.trim(), JSON.stringify(config), id]);
+    if (!rows[0]) return res.status(404).json({ error: '報表不存在' });
+    res.json({ report: rows[0] });
+  } catch (err) { console.error('[api/reports]', err); res.status(500).json({ error: '伺服器錯誤' }); }
+});
+
+app.delete('/api/reports/:id', requireAuth, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'id 不合法' });
+  try {
+    await pool.query('DELETE FROM traf_reports WHERE id=$1', [id]);
+    res.json({ ok: true });
+  } catch (err) { console.error('[api/reports]', err); res.status(500).json({ error: '伺服器錯誤' }); }
 });
 
 // 手動重抓（無 body 時各源用自己的預設窗；可帶 {from, to} 指定區間）
