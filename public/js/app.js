@@ -1,7 +1,9 @@
 // app.js — 登入、日期區間、載入 /api/data、渲染四個頁籤
 (function () {
   const $ = s => document.querySelector(s);
-  const state = { secret: localStorage.getItem('traf_secret') || '', from: '', to: '', data: null };
+  const state = { secret: localStorage.getItem('traf_secret') || '',
+    from: '', to: '', compareOn: false, compareMode: 'prev', cmpFrom: '', cmpTo: '',
+    data: null, cmpData: null };
 
   // ── 日期工具（台北時區）──────────────────────────
   function today() {
@@ -22,6 +24,24 @@
     } else { state.from = addDays(t, -Number(kind)); state.to = addDays(t, -1); }
     $('#date-from').value = state.from;
     $('#date-to').value = state.to;
+  }
+  function daySpan(from, to) {   // 含頭尾天數
+    return Math.round((new Date(`${to}T00:00:00Z`) - new Date(`${from}T00:00:00Z`)) / 86400000) + 1;
+  }
+  function prevRange(from, to) {
+    const n = daySpan(from, to);
+    const t = addDays(from, -1);
+    return { from: addDays(t, -(n - 1)), to: t };
+  }
+  function pct(cur, prev) {
+    cur = Number(cur); prev = Number(prev);
+    if (!isFinite(cur) || !isFinite(prev) || prev === 0) return null;
+    return (cur - prev) / prev * 100;
+  }
+  function fmtPct(n) {
+    if (n === null) return { text: '—', cls: '' };
+    const s = `${n >= 0 ? '▲' : '▼'} ${Math.abs(n).toFixed(1)}%`;
+    return { text: s, cls: n >= 0 ? 'delta-up' : 'delta-down' };
   }
 
   // ── API ──────────────────────────────────────────
@@ -75,19 +95,28 @@
       $(`#tab-${btn.dataset.tab}`).classList.add('active');
     };
   });
-  document.querySelectorAll('#date-controls [data-range]').forEach(btn => {
-    btn.onclick = () => {
-      document.querySelectorAll('#date-controls [data-range]').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      setRange(btn.dataset.range);
-      load();
-    };
+  $('#date-preset').addEventListener('change', () => {
+    const v = $('#date-preset').value;
+    $('#custom-range').hidden = v !== 'custom';
+    if (v !== 'custom') { setRange(v); load(); }
   });
   $('#date-apply').onclick = () => {
-    document.querySelectorAll('#date-controls [data-range]').forEach(b => b.classList.remove('active'));
-    state.from = $('#date-from').value;
-    state.to = $('#date-to').value;
-    if (state.from && state.to) load();
+    state.from = $('#date-from').value; state.to = $('#date-to').value;
+    if (state.from && state.to && state.from <= state.to) load();
+  };
+  $('#compare-on').addEventListener('change', () => {
+    state.compareOn = $('#compare-on').checked;
+    $('#compare-controls').hidden = !state.compareOn;
+    load();
+  });
+  $('#compare-mode').addEventListener('change', () => {
+    state.compareMode = $('#compare-mode').value;
+    $('#compare-custom').hidden = state.compareMode !== 'custom';
+    if (state.compareMode === 'prev') load();
+  });
+  $('#compare-apply').onclick = () => {
+    state.cmpFrom = $('#cmp-from').value; state.cmpTo = $('#cmp-to').value;
+    if (state.cmpFrom && state.cmpTo && state.cmpFrom <= state.cmpTo) load();
   };
   $('#refetch-btn').onclick = async () => {
     $('#refetch-btn').disabled = true;
@@ -100,12 +129,15 @@
 
   // ── 載入與渲染 ───────────────────────────────────
   async function load() {
-    state.data = await api(`/api/data?from=${state.from}&to=${state.to}`);
-    renderStatus();
-    renderOverview();
-    renderGa();
-    renderFb();
-    renderAds();
+    const q = r => `/api/data?from=${r.from}&to=${r.to}&posts_from=${r.from}&posts_to=${r.to}`;
+    state.data = await api(q({ from: state.from, to: state.to }));
+    if (state.compareOn) {
+      const r = state.compareMode === 'custom'
+        ? { from: state.cmpFrom, to: state.cmpTo }
+        : prevRange(state.from, state.to);
+      state.cmpData = (r.from && r.to) ? await api(q(r)) : null;
+    } else state.cmpData = null;
+    renderStatus(); renderOverview(); renderGa(); renderFb(); renderAds();
   }
 
   const num = v => Number(v || 0).toLocaleString('zh-TW');

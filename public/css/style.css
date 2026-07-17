@@ -55,3 +55,11 @@ main { padding: 20px; }
 .card th, .card td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eceff1; }
 .card th { color: #607d8b; font-weight: normal; }
 .card td.num, .card th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+#date-controls select { padding: 6px 10px; border: 1px solid #cfd8dc; border-radius: 8px;
+  background: #fff; font-size: 13px; cursor: pointer; }
+#compare-label { display: flex; align-items: center; gap: 4px; font-size: 13px;
+  color: #455a64; cursor: pointer; white-space: nowrap; }
+.delta-up { color: #2e7d32; }
+.delta-down { color: #c62828; }
+.kpi .kpi-delta { font-size: 13px; font-weight: bold; }

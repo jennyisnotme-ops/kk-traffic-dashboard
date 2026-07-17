@@ -30,13 +30,29 @@
       <button data-tab="ads">廣告成效</button>
     </nav>
     <div id="date-controls">
-      <button data-range="7">近 7 天</button>
-      <button data-range="30" class="active">近 30 天</button>
-      <button data-range="90">近 90 天</button>
-      <button data-range="thisMonth">本月</button>
-      <button data-range="lastMonth">上月</button>
-      <input type="date" id="date-from"> ~ <input type="date" id="date-to">
-      <button id="date-apply">套用</button>
+      <select id="date-preset">
+        <option value="7">近 7 天</option>
+        <option value="30" selected>近 30 天</option>
+        <option value="90">近 90 天</option>
+        <option value="thisMonth">本月</option>
+        <option value="lastMonth">上月</option>
+        <option value="custom">自訂區間</option>
+      </select>
+      <span id="custom-range" hidden>
+        <input type="date" id="date-from"> ~ <input type="date" id="date-to">
+        <button id="date-apply">套用</button>
+      </span>
+      <label id="compare-label"><input type="checkbox" id="compare-on"> 比較</label>
+      <span id="compare-controls" hidden>
+        <select id="compare-mode">
+          <option value="prev" selected>前一期</option>
+          <option value="custom">自訂區間</option>
+        </select>
+        <span id="compare-custom" hidden>
+          <input type="date" id="cmp-from"> ~ <input type="date" id="cmp-to">
+          <button id="compare-apply">套用比較</button>
+        </span>
+      </span>
     </div>
     <div id="status-bar">
       <span id="last-update"></span>
