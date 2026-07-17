@@ -145,6 +145,25 @@
     $('#refetch-btn').textContent = '手動重抓';
   };
 
+  // ── Sortable 排序記憶 ────────────────────────────
+  function initSortable(tabEl, tabName) {
+    const key = `traf_card_order_${tabName}`;
+    const saved = JSON.parse(localStorage.getItem(key) || '[]');
+    if (saved.length) {
+      for (const cid of saved) {
+        const elCard = tabEl.querySelector(`[data-cid="${CSS.escape(cid)}"]`);
+        if (elCard) tabEl.appendChild(elCard);
+      }
+    }
+    tabEl._sortable?.destroy?.();
+    tabEl._sortable = new Sortable(tabEl, {
+      animation: 150,
+      handle: '.card-head, .kpi-label',
+      onEnd: () => localStorage.setItem(key,
+        JSON.stringify([...tabEl.children].map(c => c.dataset.cid).filter(Boolean))),
+    });
+  }
+
   // ── 載入與渲染 ───────────────────────────────────
   async function load() {
     const q = r => `/api/data?from=${r.from}&to=${r.to}&posts_from=${r.from}&posts_to=${r.to}`;
@@ -156,6 +175,10 @@
       state.cmpData = (r.from && r.to) ? await api(q(r)) : null;
     } else state.cmpData = null;
     renderStatus(); renderOverview(); renderGa(); renderFb(); renderAds();
+    initSortable($('#tab-overview'), 'overview');
+    initSortable($('#tab-ga'), 'ga');
+    initSortable($('#tab-fb'), 'fb');
+    initSortable($('#tab-ads'), 'ads');
   }
 
   const num = v => Number(v || 0).toLocaleString('zh-TW');

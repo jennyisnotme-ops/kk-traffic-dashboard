@@ -99,9 +99,11 @@
   // 圖表卡：types 是這張卡允許的類型，使用者選擇存 localStorage
   // compare（選用）: { labels, series } 同 datasets，非 pie 疊虛線比較圖
   // exp（選用）: { filename, fields: [{key,label}], rows: [{...}] } — 提供時卡頭顯示匯出鈕
-  function chartCard({ id, title, el, types, defaultType, datasets, wide, compare, exp }) {
+  function chartCard({ id, title, el, types, defaultType, datasets, wide, compare, exp, cid }) {
     const card = document.createElement('div');
     card.className = 'card' + (wide ? ' wide' : '');
+    const finalCid = cid || String(id || title || '').replace(/\s+/g, '_');
+    card.dataset.cid = finalCid;
     const saved = localStorage.getItem(prefKey(id));
     let current = types.includes(saved) ? saved : defaultType;
 
@@ -142,9 +144,11 @@
     render(id, canvas, current, datasets, compare);
   }
 
-  function kpiCard({ el, label, value, delta }) {
+  function kpiCard({ el, label, value, delta, cid }) {
     const card = document.createElement('div');
     card.className = 'card kpi';
+    const finalCid = cid || String(label || '').replace(/\s+/g, '_');
+    card.dataset.cid = finalCid;
     const d = delta ? `<div class="kpi-delta ${esc(delta.cls)}">${esc(delta.text)}</div>` : '';
     card.innerHTML = `<div class="kpi-value">${esc(value)}</div><div class="kpi-label">${esc(label)}</div>${d}`;
     el.appendChild(card);
@@ -152,9 +156,11 @@
 
   // columns: [{key, label, num?, format?, clsKey?}]
   // exp（選用）: { filename, fields: [{key,label}], rows: [{...}] } — 提供時卡頭顯示匯出鈕（無 PNG 選項）
-  function tableCard({ title, el, columns, rows, wide, exp }) {
+  function tableCard({ title, el, columns, rows, wide, exp, cid }) {
     const card = document.createElement('div');
     card.className = 'card' + (wide ? ' wide' : '');
+    const finalCid = cid || String(title || '').replace(/\s+/g, '_');
+    card.dataset.cid = finalCid;
     const ths = columns.map(c => `<th class="${c.num ? 'num' : ''}">${esc(c.label)}</th>`).join('');
     const trs = rows.map(r =>
       `<tr>${columns.map(c => {

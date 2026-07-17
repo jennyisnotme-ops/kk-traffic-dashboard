@@ -36,7 +36,7 @@ main { padding: 20px; }
 .card { background: #fff; border-radius: 12px; padding: 16px;
   box-shadow: 0 1px 4px rgba(38,50,56,.08); min-height: 120px; }
 .card.wide { grid-column: 1 / -1; }
-.card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; cursor: grab; }
 .card-head h2 { font-size: 15px; }
 .type-switch button { border: 1px solid #cfd8dc; background: #fff; cursor: pointer;
   padding: 3px 10px; font-size: 12px; }
@@ -48,7 +48,7 @@ main { padding: 20px; }
 /* KPI 卡 */
 .kpi { display: flex; flex-direction: column; gap: 4px; justify-content: center; }
 .kpi .kpi-value { font-size: 30px; font-weight: bold; color: #1565c0; }
-.kpi .kpi-label { font-size: 13px; color: #607d8b; }
+.kpi .kpi-label { font-size: 13px; color: #607d8b; cursor: grab; }
 
 /* 表格卡 */
 .card table { width: 100%; border-collapse: collapse; font-size: 13px; }
