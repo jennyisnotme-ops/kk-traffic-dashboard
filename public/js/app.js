@@ -581,7 +581,7 @@
     return out;
   }
   // data: /api/data 回傳；metric: config.metrics 的一項；axis: 'YYYY-MM-DD'[]
-  // 注意：API 的 DATE 欄位是 UTC 位移 ISO 字串，需經 taipeiDate 正規化才能對上 axis
+  // DATE 欄位已是 'YYYY-MM-DD' 純字串；taipeiDate 為防禦性正規化（對純字串為 no-op）
   function metricSeries(data, metric, axis) {
     const def = metricDef(metric);
     const byDate = new Map();
@@ -656,13 +656,19 @@
     </div>`;
   }
 
+  // 既有報表的 channel/campaign 若不在目前區間資料中，需補一個 selected 選項保留原值，
+  // 否則原生 select 會默默退回第一個選項，儲存時就改壞全部門共用的報表設定
   function channelOptions(selected) {
     const set = [...new Set(state.data.ga_channels.map(r => r.channel))].sort();
-    return set.map(c => `<option ${c === selected ? 'selected' : ''}>${esc(c)}</option>`).join('');
+    const stale = selected && !set.includes(selected)
+      ? `<option value="${esc(selected)}" selected>${esc(selected)}（不在目前區間）</option>` : '';
+    return stale + set.map(c => `<option ${c === selected ? 'selected' : ''}>${esc(c)}</option>`).join('');
   }
   function campaignOptions(selected) {
     const m = new Map(state.data.ads_daily.map(r => [r.campaign_id, r.campaign_name]));
-    return ['<option value="">全帳戶</option>',
+    const stale = selected && !m.has(selected)
+      ? `<option value="${esc(selected)}" selected>（不在目前區間的活動 ${esc(selected)}）</option>` : '';
+    return ['<option value="">全帳戶</option>', stale,
       ...[...m].map(([id, name]) => `<option value="${esc(id)}" ${id === selected ? 'selected' : ''}>${esc(name)}</option>`)].join('');
   }
 
