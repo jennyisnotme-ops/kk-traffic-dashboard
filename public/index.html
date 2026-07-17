@@ -29,6 +29,7 @@
       <button data-tab="ga">GA 流量</button>
       <button data-tab="fb">粉專成效</button>
       <button data-tab="ads">廣告成效</button>
+      <button data-tab="custom">自訂報表</button>
     </nav>
     <div id="date-controls">
       <select id="date-preset">
@@ -67,6 +68,7 @@
     <section id="tab-ga" class="tab"></section>
     <section id="tab-fb" class="tab"></section>
     <section id="tab-ads" class="tab"></section>
+    <section id="tab-custom" class="tab"></section>
   </main>
 </div>
 
@@ -76,6 +78,21 @@
     <div id="export-formats"></div>
     <div id="export-fields"></div>
     <div id="export-actions"><button id="export-cancel">取消</button><button id="export-go">匯出</button></div>
+  </div>
+</div>
+
+<div id="report-modal" hidden>
+  <div id="report-panel">
+    <h3 id="report-title">新增報表</h3>
+    <input type="text" id="report-name" placeholder="報表名稱（50 字內）" maxlength="50">
+    <div id="report-metrics"></div>
+    <div>圖表類型：
+      <select id="report-type">
+        <option value="smooth">曲線</option><option value="line">折線</option>
+        <option value="bar">長條</option><option value="pie">圓餅</option>
+      </select>
+    </div>
+    <div id="report-actions"><button id="report-cancel">取消</button><button id="report-save">儲存</button></div>
   </div>
 </div>
 

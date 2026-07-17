@@ -78,3 +78,20 @@ main { padding: 20px; }
 #export-actions #export-go { background: #1565c0; color: #fff; border-color: #1565c0; }
 .export-btn { border: 1px solid #cfd8dc; background: #fff; cursor: pointer;
   padding: 3px 10px; font-size: 12px; border-radius: 12px; margin-left: 6px; }
+
+/* 自訂報表精靈 */
+#report-modal { position: fixed; inset: 0; background: rgba(38,50,56,.5);
+  display: flex; align-items: center; justify-content: center; z-index: 50; }
+#report-panel { background: #fff; border-radius: 12px; padding: 20px; width: 420px;
+  max-height: 85vh; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; font-size: 13px; }
+#report-name { padding: 8px; border: 1px solid #cfd8dc; border-radius: 8px; }
+#report-metrics { display: flex; flex-direction: column; gap: 6px; }
+#report-metrics .metric-row { display: flex; align-items: center; gap: 6px; }
+#report-metrics select { padding: 4px; border: 1px solid #cfd8dc; border-radius: 6px; }
+#report-actions { display: flex; justify-content: flex-end; gap: 8px; }
+#report-actions button { padding: 6px 16px; border: 1px solid #cfd8dc; border-radius: 8px; background: #fff; cursor: pointer; }
+#report-actions #report-save { background: #1565c0; color: #fff; border-color: #1565c0; }
+.card-head .card-actions button { border: 1px solid #cfd8dc; background: #fff; cursor: pointer;
+  padding: 3px 8px; font-size: 12px; border-radius: 12px; margin-left: 4px; }
+#add-report-btn { padding: 10px 20px; border: 1px dashed #90a4ae; border-radius: 12px;
+  background: #fff; cursor: pointer; font-size: 14px; color: #455a64; }

@@ -99,7 +99,8 @@
   // 圖表卡：types 是這張卡允許的類型，使用者選擇存 localStorage
   // compare（選用）: { labels, series } 同 datasets，非 pie 疊虛線比較圖
   // exp（選用）: { filename, fields: [{key,label}], rows: [{...}] } — 提供時卡頭顯示匯出鈕
-  function chartCard({ id, title, el, types, defaultType, datasets, wide, compare, exp, cid }) {
+  // actions（選用）: [{label, onClick}] — 卡頭右側小動作鈕（如報表的編輯/刪除）
+  function chartCard({ id, title, el, types, defaultType, datasets, wide, compare, exp, cid, actions }) {
     const card = document.createElement('div');
     card.className = 'card' + (wide ? ' wide' : '');
     const finalCid = cid || String(id || title || '').replace(/\s+/g, '_');
@@ -126,6 +127,16 @@
       sw.appendChild(btn);
     }
     head.appendChild(sw);
+    if (Array.isArray(actions) && actions.length) {
+      const act = document.createElement('span');
+      act.className = 'card-actions';
+      for (const a of actions) {
+        const b = document.createElement('button');
+        b.textContent = a.label; b.onclick = a.onClick;
+        act.appendChild(b);
+      }
+      head.appendChild(act);
+    }
     if (exp) {
       const eb = document.createElement('button');
       eb.className = 'export-btn';

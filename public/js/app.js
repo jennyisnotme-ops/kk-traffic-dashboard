@@ -3,7 +3,7 @@
   const $ = s => document.querySelector(s);
   const state = { secret: localStorage.getItem('traf_secret') || '',
     from: '', to: '', compareOn: false, compareMode: 'prev', cmpFrom: '', cmpTo: '',
-    data: null, cmpData: null };
+    data: null, cmpData: null, reports: [] };
 
   // ── 日期工具（台北時區）──────────────────────────
   function today() {
@@ -80,7 +80,7 @@
   });
   $('#logout-btn').addEventListener('click', logout);
 
-  function enter() {
+  async function enter() {
     $('#login-overlay').style.display = 'none';
     $('#main').hidden = false;
     Cards.configureExport({
@@ -94,6 +94,7 @@
         return res.blob();
       },
     });
+    await loadReports();
     load();
   }
 
@@ -167,20 +168,24 @@
   }
 
   // ── 載入與渲染 ───────────────────────────────────
+  function cmpRangeUsed() {   // 目前實際使用的比較區間（供 load 與 renderCustom 共用）
+    return state.compareMode === 'custom'
+      ? { from: state.cmpFrom, to: state.cmpTo }
+      : prevRange(state.from, state.to);
+  }
   async function load() {
     const q = r => `/api/data?from=${r.from}&to=${r.to}&posts_from=${r.from}&posts_to=${r.to}`;
     state.data = await api(q({ from: state.from, to: state.to }));
     if (state.compareOn) {
-      const r = state.compareMode === 'custom'
-        ? { from: state.cmpFrom, to: state.cmpTo }
-        : prevRange(state.from, state.to);
+      const r = cmpRangeUsed();
       state.cmpData = (r.from && r.to) ? await api(q(r)) : null;
     } else state.cmpData = null;
-    renderStatus(); renderOverview(); renderGa(); renderFb(); renderAds();
+    renderStatus(); renderOverview(); renderGa(); renderFb(); renderAds(); renderCustom();
     initSortable($('#tab-overview'), 'overview');
     initSortable($('#tab-ga'), 'ga');
     initSortable($('#tab-fb'), 'fb');
     initSortable($('#tab-ads'), 'ads');
+    initSortable($('#tab-custom'), 'custom');
   }
 
   const num = v => Number(v || 0).toLocaleString('zh-TW');
@@ -545,6 +550,178 @@
         rows: camps,
       },
     });
+  }
+
+  // ── 自訂報表 ─────────────────────────────────────
+  const esc = v => String(v ?? '').replace(/[&<>"']/g,
+    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  // 前端指標目錄 — 必須與後端 lib/validators.js 的 REPORT_FIELDS 一致
+  // （ga_channels.users 後端雖允許，前端保留給未來，暫不列出）
+  const METRICS = [
+    { source: 'ga_daily', field: 'users', label: 'GA 使用者', color: '#1565c0' },
+    { source: 'ga_daily', field: 'sessions', label: 'GA 工作階段', color: '#26a69a' },
+    { source: 'ga_daily', field: 'pageviews', label: 'GA 瀏覽頁數', color: '#8e24aa' },
+    { source: 'ga_daily', field: 'engagement_rate', label: 'GA 互動率', color: '#5c6bc0' },
+    { source: 'ga_channels', field: 'sessions', label: 'GA 管道工作階段', color: '#00897b', needsChannel: true },
+    { source: 'fb_page_daily', field: 'reach', label: '粉專觀看', color: '#f9a825' },
+    { source: 'fb_page_daily', field: 'engagement', label: '粉專互動', color: '#ef6c00' },
+    { source: 'fb_page_daily', field: 'fans_total', label: '追蹤者總數', color: '#6d4c41' },
+    { source: 'fb_page_daily', field: 'fans_change', label: '追蹤者變化', color: '#78909c' },
+    { source: 'ads_daily', field: 'spend', label: '廣告花費', color: '#c62828', canCampaign: true },
+    { source: 'ads_daily', field: 'impressions', label: '廣告曝光', color: '#ad1457', canCampaign: true },
+    { source: 'ads_daily', field: 'clicks', label: '廣告點擊', color: '#283593', canCampaign: true },
+    { source: 'ads_daily', field: 'conversions', label: '廣告轉換', color: '#004d40', canCampaign: true },
+  ];
+  const metricDef = m => METRICS.find(x => x.source === m.source && x.field === m.field);
+
+  function dateAxis(from, to) {
+    const out = [];
+    for (let d = from; d <= to; d = addDays(d, 1)) out.push(d);
+    return out;
+  }
+  // data: /api/data 回傳；metric: config.metrics 的一項；axis: 'YYYY-MM-DD'[]
+  // 注意：API 的 DATE 欄位是 UTC 位移 ISO 字串，需經 taipeiDate 正規化才能對上 axis
+  function metricSeries(data, metric, axis) {
+    const def = metricDef(metric);
+    const byDate = new Map();
+    if (metric.source === 'ga_channels') {
+      for (const r of data.ga_channels) if (r.channel === metric.channel)
+        byDate.set(taipeiDate(r.date), (byDate.get(taipeiDate(r.date)) || 0) + Number(r[metric.field] || 0));
+    } else if (metric.source === 'ads_daily') {
+      for (const r of data.ads_daily) if (!metric.campaign_id || r.campaign_id === metric.campaign_id)
+        byDate.set(taipeiDate(r.date), (byDate.get(taipeiDate(r.date)) || 0) + Number(r[metric.field] || 0));
+    } else {
+      for (const r of data[metric.source] || []) byDate.set(taipeiDate(r.date), Number(r[metric.field] || 0));
+    }
+    return { label: metric.label || (metric.channel ? `${def.label}（${metric.channel}）` : def.label),
+             data: axis.map(d => byDate.get(d) ?? 0), color: def.color };
+  }
+
+  async function loadReports() { state.reports = (await api('/api/reports')).reports; }
+
+  function renderCustom() {
+    const el = $('#tab-custom');
+    el.innerHTML = '';
+    const axis = dateAxis(state.from, state.to);
+    for (const rep of state.reports) {
+      const series = rep.config.metrics.map(m => metricSeries(state.data, m, axis));
+      let compare = null;
+      if (state.cmpData) {
+        const cr = cmpRangeUsed();
+        const cAxis = dateAxis(cr.from, cr.to);
+        compare = { labels: cAxis.map(d => d.slice(5)),
+                    series: rep.config.metrics.map(m => metricSeries(state.cmpData, m, cAxis)) };
+      }
+      Cards.chartCard({
+        id: `custom_${rep.id}`, title: rep.name, el, wide: true,
+        types: ['line', 'smooth', 'bar', 'pie'], defaultType: rep.config.type,
+        datasets: { labels: axis.map(d => d.slice(5)), series },
+        compare,
+        exp: {
+          filename: `${rep.name}_${state.from}_${state.to}`,
+          fields: [{ key: 'date', label: '日期' }, ...series.map((s, i) => ({ key: `m${i}`, label: s.label }))],
+          rows: axis.map((d, ri) => Object.fromEntries(
+            [['date', d], ...series.map((s, i) => [`m${i}`, s.data[ri]])])),
+        },
+        actions: [
+          { label: '編輯', onClick: () => openReportModal(rep) },
+          { label: '刪除', onClick: async () => {
+              if (!confirm(`刪除報表「${rep.name}」？（全部門共用，刪除影響所有人）`)) return;
+              await api(`/api/reports/${rep.id}`, { method: 'DELETE' });
+              await loadReports(); renderCustom();
+            } },
+        ],
+      });
+    }
+    const add = document.createElement('button');
+    add.id = 'add-report-btn';
+    add.textContent = '＋ 新增報表';
+    add.onclick = () => openReportModal(null);
+    el.appendChild(add);
+  }
+
+  // ── 報表精靈 ─────────────────────────────────────
+  // Number('') 是 0，空值必須先擋掉，否則未選擇的列會被誤當成 METRICS[0]
+  const metricAt = v => (v === '' ? null : METRICS[Number(v)]);
+
+  function metricRowHtml(sel) {   // sel: 既有 metric 或 null
+    const opts = METRICS.map((m, i) =>
+      `<option value="${i}" ${sel && m.source === sel.source && m.field === sel.field ? 'selected' : ''}>${m.label}</option>`);
+    return `<div class="metric-row">
+      <select class="mr-metric"><option value="">— 選擇指標 —</option>${opts.join('')}</select>
+      <select class="mr-channel" hidden></select>
+      <select class="mr-campaign" hidden></select>
+      <button type="button" class="mr-del">✕</button>
+    </div>`;
+  }
+
+  function channelOptions(selected) {
+    const set = [...new Set(state.data.ga_channels.map(r => r.channel))].sort();
+    return set.map(c => `<option ${c === selected ? 'selected' : ''}>${esc(c)}</option>`).join('');
+  }
+  function campaignOptions(selected) {
+    const m = new Map(state.data.ads_daily.map(r => [r.campaign_id, r.campaign_name]));
+    return ['<option value="">全帳戶</option>',
+      ...[...m].map(([id, name]) => `<option value="${esc(id)}" ${id === selected ? 'selected' : ''}>${esc(name)}</option>`)].join('');
+  }
+
+  function openReportModal(rep) {
+    const modal = $('#report-modal');
+    $('#report-title').textContent = rep ? '編輯報表' : '新增報表';
+    $('#report-name').value = rep ? rep.name : '';
+    $('#report-type').value = rep ? rep.config.type : 'smooth';
+    const box = $('#report-metrics');
+    const metrics = rep ? rep.config.metrics : [null];
+    box.innerHTML = metrics.map(m => metricRowHtml(m)).join('') +
+      '<button type="button" id="mr-add">＋ 加一個指標</button>';
+
+    function wireRow(row, sel) {
+      const mSel = row.querySelector('.mr-metric');
+      const ch = row.querySelector('.mr-channel');
+      const cp = row.querySelector('.mr-campaign');
+      function refresh() {
+        const def = metricAt(mSel.value);
+        ch.hidden = !def?.needsChannel; cp.hidden = !def?.canCampaign;
+        if (def?.needsChannel && !ch.options.length) ch.innerHTML = channelOptions(sel?.channel);
+        if (def?.canCampaign && !cp.options.length) cp.innerHTML = campaignOptions(sel?.campaign_id);
+      }
+      mSel.onchange = refresh;
+      row.querySelector('.mr-del').onclick = () => row.remove();
+      refresh();
+    }
+    [...box.querySelectorAll('.metric-row')].forEach((row, i) => wireRow(row, metrics[i]));
+    box.querySelector('#mr-add').onclick = () => {
+      const div = document.createElement('div');
+      div.innerHTML = metricRowHtml(null);
+      const row = div.firstElementChild;
+      box.insertBefore(row, box.querySelector('#mr-add'));
+      wireRow(row, null);
+    };
+
+    modal.hidden = false;
+    $('#report-cancel').onclick = () => { modal.hidden = true; };
+    $('#report-save').onclick = async () => {
+      const name = $('#report-name').value.trim();
+      const metricsOut = [...box.querySelectorAll('.metric-row')].map(row => {
+        const def = metricAt(row.querySelector('.mr-metric').value);
+        if (!def) return null;
+        const m = { source: def.source, field: def.field };
+        if (def.needsChannel) m.channel = row.querySelector('.mr-channel').value;
+        const cpv = row.querySelector('.mr-campaign').value;
+        if (def.canCampaign && cpv) m.campaign_id = cpv;
+        return m;
+      }).filter(Boolean);
+      if (!name) return alert('請輸入報表名稱');
+      if (!metricsOut.length) return alert('至少選一個指標');
+      const body = JSON.stringify({ name, config: { type: $('#report-type').value, metrics: metricsOut } });
+      try {
+        if (rep) await api(`/api/reports/${rep.id}`, { method: 'PUT', body });
+        else await api('/api/reports', { method: 'POST', body });
+        modal.hidden = true;
+        await loadReports(); renderCustom();
+      } catch (err) { alert(`儲存失敗：${err.message}`); }
+    };
   }
 
   // ── 啟動 ─────────────────────────────────────────
