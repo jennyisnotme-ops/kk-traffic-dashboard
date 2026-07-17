@@ -115,8 +115,15 @@
     if (state.compareMode === 'prev') load();
   });
   $('#compare-apply').onclick = () => {
-    state.cmpFrom = $('#cmp-from').value; state.cmpTo = $('#cmp-to').value;
-    if (state.cmpFrom && state.cmpTo && state.cmpFrom <= state.cmpTo) load();
+    const cf = $('#cmp-from').value, ct = $('#cmp-to').value;
+    if (!(cf && ct && cf <= ct)) return;
+    const mainDays = daySpan(state.from, state.to);
+    const cmpDays = daySpan(cf, ct);
+    if (cmpDays !== mainDays) {
+      return alert(`比較區間天數需與主區間相同（目前主區間 ${mainDays} 天，你選了 ${cmpDays} 天）`);
+    }
+    state.cmpFrom = cf; state.cmpTo = ct;
+    load();
   };
   $('#refetch-btn').onclick = async () => {
     $('#refetch-btn').disabled = true;

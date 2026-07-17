@@ -30,8 +30,9 @@
                 tension: type === 'smooth' ? 0.35 : 0,
                 fill: false,
               })),
+              // 比較資料以索引對齊主區間 labels（第 n 天對第 n 天）；cmp.labels 僅供匯出用
               ...(cmp && !isPie ? cmp.series.map(s => ({
-                label: `${s.label}（比較）`, data: s.data,
+                label: `${s.label}（比較）`, data: s.data.slice(0, ds.labels.length),
                 borderColor: s.color + '88', backgroundColor: s.color + '22',
                 borderDash: [6, 4], tension: type === 'smooth' ? 0.35 : 0, fill: false,
                 ...(chartType === 'bar' ? {} : { pointRadius: 0 }),
