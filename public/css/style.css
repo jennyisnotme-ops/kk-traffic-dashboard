@@ -63,3 +63,18 @@ main { padding: 20px; }
 .delta-up { color: #2e7d32; }
 .delta-down { color: #c62828; }
 .kpi .kpi-delta { font-size: 13px; font-weight: bold; }
+
+/* 匯出彈窗 */
+#export-modal { position: fixed; inset: 0; background: rgba(38,50,56,.5);
+  display: flex; align-items: center; justify-content: center; z-index: 50; }
+#export-panel { background: #fff; border-radius: 12px; padding: 20px; width: 340px;
+  max-height: 80vh; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+#export-panel h3 { font-size: 15px; }
+#export-formats, #export-fields { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+#export-fields { border-top: 1px solid #eceff1; padding-top: 10px; }
+#export-actions { display: flex; justify-content: flex-end; gap: 8px; }
+#export-actions button { padding: 6px 16px; border: 1px solid #cfd8dc; border-radius: 8px;
+  background: #fff; cursor: pointer; }
+#export-actions #export-go { background: #1565c0; color: #fff; border-color: #1565c0; }
+.export-btn { border: 1px solid #cfd8dc; background: #fff; cursor: pointer;
+  padding: 3px 10px; font-size: 12px; border-radius: 12px; margin-left: 6px; }

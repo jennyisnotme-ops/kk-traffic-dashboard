@@ -83,6 +83,17 @@
   function enter() {
     $('#login-overlay').style.display = 'none';
     $('#main').hidden = false;
+    Cards.configureExport({
+      post: async payload => {
+        const res = await fetch('/api/export', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.secret}` },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || '匯出失敗');
+        return res.blob();
+      },
+    });
     load();
   }
 
@@ -194,6 +205,15 @@
         series: [{ label: '工作階段', data: d.ga_daily.map(r => +r.sessions), color: '#1565c0' }] },
       compare: seriesCompare(d.ga_daily, cmpOf('ga_daily'),
         rows => [{ label: '工作階段', data: rows.map(r => +r.sessions), color: '#1565c0' }]),
+      exp: {
+        filename: `GA每日工作階段_${state.from}_${state.to}`,
+        fields: [{ key: 'date', label: '日期' }, { key: 'sessions', label: '工作階段' },
+                 ...(state.cmpData ? [{ key: 'sessionsCmp', label: '工作階段（比較）' }] : [])],
+        rows: d.ga_daily.map((r, i) => ({
+          date: dstr(r.date), sessions: +r.sessions,
+          ...(state.cmpData ? { sessionsCmp: cmpOf('ga_daily')?.[i] ? +cmpOf('ga_daily')[i].sessions : '' } : {}),
+        })),
+      },
     });
     Cards.chartCard({
       id: 'ov_fb', title: '粉專每日觀看', el,
@@ -202,6 +222,15 @@
         series: [{ label: '觀看', data: d.fb_page_daily.map(r => +r.reach), color: '#26a69a' }] },
       compare: seriesCompare(d.fb_page_daily, cmpOf('fb_page_daily'),
         rows => [{ label: '觀看', data: rows.map(r => +r.reach), color: '#26a69a' }]),
+      exp: {
+        filename: `粉專每日觀看_${state.from}_${state.to}`,
+        fields: [{ key: 'date', label: '日期' }, { key: 'reach', label: '觀看' },
+                 ...(state.cmpData ? [{ key: 'reachCmp', label: '觀看（比較）' }] : [])],
+        rows: d.fb_page_daily.map((r, i) => ({
+          date: dstr(r.date), reach: +r.reach,
+          ...(state.cmpData ? { reachCmp: cmpOf('fb_page_daily')?.[i] ? +cmpOf('fb_page_daily')[i].reach : '' } : {}),
+        })),
+      },
     });
     const byDate = groupSum(d.ads_daily, 'date', 'spend');
     const cb = cmpOf('ads_daily') ? groupSum(cmpOf('ads_daily'), 'date', 'spend') : null;
@@ -212,6 +241,15 @@
         series: [{ label: '花費', data: byDate.map(r => r.value), color: '#ef6c00' }] },
       compare: cb ? { labels: cb.map(r => dstr(r.key)),
         series: [{ label: '花費', data: cb.map(r => r.value), color: '#ef6c00' }] } : null,
+      exp: {
+        filename: `廣告每日花費_${state.from}_${state.to}`,
+        fields: [{ key: 'date', label: '日期' }, { key: 'spend', label: '花費' },
+                 ...(cb ? [{ key: 'spendCmp', label: '花費（比較）' }] : [])],
+        rows: byDate.map((r, i) => ({
+          date: dstr(r.key), spend: r.value,
+          ...(cb ? { spendCmp: cb[i] ? cb[i].value : '' } : {}),
+        })),
+      },
     });
   }
 
@@ -240,6 +278,25 @@
         { label: '工作階段', data: rows.map(r => +r.sessions), color: '#26a69a' },
         { label: '瀏覽頁數', data: rows.map(r => +r.pageviews), color: '#8e24aa' },
       ]),
+      exp: {
+        filename: `GA每日流量_${state.from}_${state.to}`,
+        fields: [{ key: 'date', label: '日期' }, { key: 'users', label: '使用者' },
+                 { key: 'sessions', label: '工作階段' }, { key: 'pageviews', label: '瀏覽頁數' },
+                 ...(state.cmpData ? [
+                   { key: 'usersCmp', label: '使用者（比較）' },
+                   { key: 'sessionsCmp', label: '工作階段（比較）' },
+                   { key: 'pageviewsCmp', label: '瀏覽頁數（比較）' },
+                 ] : [])],
+        rows: d.ga_daily.map((r, i) => {
+          const c = cmpOf('ga_daily')?.[i];
+          return {
+            date: dstr(r.date), users: +r.users, sessions: +r.sessions, pageviews: +r.pageviews,
+            ...(state.cmpData ? {
+              usersCmp: c ? +c.users : '', sessionsCmp: c ? +c.sessions : '', pageviewsCmp: c ? +c.pageviews : '',
+            } : {}),
+          };
+        }),
+      },
     });
     const ch = groupSum(d.ga_channels, 'channel', 'sessions').sort((a, b) => b.value - a.value);
     if (ch.length) {
@@ -248,6 +305,11 @@
         types: ['pie', 'bar'], defaultType: 'pie',
         datasets: { labels: ch.map(r => r.key),
           series: [{ label: '工作階段', data: ch.map(r => r.value), color: '#1565c0' }] },
+        exp: {
+          filename: `GA來源管道_${state.from}_${state.to}`,
+          fields: [{ key: 'channel', label: '管道' }, { key: 'sessions', label: '工作階段' }],
+          rows: ch.map(r => ({ channel: r.key, sessions: r.value })),
+        },
       });
     }
     const cmpPages = new Map((cmpOf('ga_pages') || []).map(r => [r.page_path, +r.views]));
@@ -263,6 +325,14 @@
         { key: 'users', label: '使用者', num: true, format: num },
         ...(state.cmpData ? [{ key: 'delta', label: '變化', num: true, clsKey: 'deltaCls' }] : []),
       ],
+      exp: {
+        filename: `GA熱門頁面_${state.from}_${state.to}`,
+        fields: [
+          { key: 'page_path', label: '頁面' }, { key: 'views', label: '瀏覽數' }, { key: 'users', label: '使用者' },
+          ...(state.cmpData ? [{ key: 'delta', label: '變化' }] : []),
+        ],
+        rows: pageRows,
+      },
     });
     const cmpEvents = new Map((cmpOf('ga_events') || []).map(r => [r.event_name, +r.count]));
     const eventRows = d.ga_events.map(r => {
@@ -276,6 +346,14 @@
         { key: 'count', label: '次數', num: true, format: num },
         ...(state.cmpData ? [{ key: 'delta', label: '變化', num: true, clsKey: 'deltaCls' }] : []),
       ],
+      exp: {
+        filename: `GA轉換事件_${state.from}_${state.to}`,
+        fields: [
+          { key: 'event_name', label: '事件' }, { key: 'count', label: '次數' },
+          ...(state.cmpData ? [{ key: 'delta', label: '變化' }] : []),
+        ],
+        rows: eventRows,
+      },
     });
   }
 
@@ -295,6 +373,20 @@
         { label: '觀看', data: rows.map(r => +r.reach), color: '#1565c0' },
         { label: '互動', data: rows.map(r => +r.engagement), color: '#ef6c00' },
       ]),
+      exp: {
+        filename: `粉專觀看與互動_${state.from}_${state.to}`,
+        fields: [{ key: 'date', label: '日期' }, { key: 'reach', label: '觀看' }, { key: 'engagement', label: '互動' },
+                 ...(state.cmpData ? [
+                   { key: 'reachCmp', label: '觀看（比較）' }, { key: 'engagementCmp', label: '互動（比較）' },
+                 ] : [])],
+        rows: d.fb_page_daily.map((r, i) => {
+          const c = cmpOf('fb_page_daily')?.[i];
+          return {
+            date: dstr(r.date), reach: +r.reach, engagement: +r.engagement,
+            ...(state.cmpData ? { reachCmp: c ? +c.reach : '', engagementCmp: c ? +c.engagement : '' } : {}),
+          };
+        }),
+      },
     });
     Cards.chartCard({
       id: 'fb_fans', title: '追蹤者數變化', el,
@@ -303,12 +395,22 @@
         series: [{ label: '追蹤者總數', data: d.fb_page_daily.map(r => +r.fans_total), color: '#26a69a' }] },
       compare: seriesCompare(d.fb_page_daily, cmpOf('fb_page_daily'),
         rows => [{ label: '追蹤者總數', data: rows.map(r => +r.fans_total), color: '#26a69a' }]),
+      exp: {
+        filename: `粉專追蹤者數_${state.from}_${state.to}`,
+        fields: [{ key: 'date', label: '日期' }, { key: 'fans_total', label: '追蹤者總數' },
+                 ...(state.cmpData ? [{ key: 'fansCmp', label: '追蹤者總數（比較）' }] : [])],
+        rows: d.fb_page_daily.map((r, i) => ({
+          date: dstr(r.date), fans_total: +r.fans_total,
+          ...(state.cmpData ? { fansCmp: cmpOf('fb_page_daily')?.[i] ? +cmpOf('fb_page_daily')[i].fans_total : '' } : {}),
+        })),
+      },
     });
+    const postRows = state.data.fb_posts.map(p => ({
+      ...p, created_at: taipeiDate(p.created_at),
+    }));
     Cards.tableCard({
       title: '近期貼文成效', el, wide: true,
-      rows: state.data.fb_posts.map(p => ({
-        ...p, created_at: taipeiDate(p.created_at),
-      })),
+      rows: postRows,
       columns: [
         { key: 'created_at', label: '日期' },
         { key: 'message', label: '內容' },
@@ -317,6 +419,15 @@
         { key: 'comments', label: '留言', num: true, format: num },
         { key: 'shares', label: '分享', num: true, format: num },
       ],
+      exp: {
+        filename: `粉專貼文成效_${state.from}_${state.to}`,
+        fields: [
+          { key: 'created_at', label: '日期' }, { key: 'message', label: '內容' },
+          { key: 'reach', label: '觀看' }, { key: 'likes', label: '反應' },
+          { key: 'comments', label: '留言' }, { key: 'shares', label: '分享' },
+        ],
+        rows: postRows,
+      },
     });
   }
 
@@ -336,6 +447,15 @@
         series: [{ label: '花費', data: byDate.map(r => r.value), color: '#ef6c00' }] },
       compare: spendCb ? { labels: spendCb.map(r => dstr(r.key)),
         series: [{ label: '花費', data: spendCb.map(r => r.value), color: '#ef6c00' }] } : null,
+      exp: {
+        filename: `廣告每日花費_${state.from}_${state.to}`,
+        fields: [{ key: 'date', label: '日期' }, { key: 'spend', label: '花費' },
+                 ...(spendCb ? [{ key: 'spendCmp', label: '花費（比較）' }] : [])],
+        rows: byDate.map((r, i) => ({
+          date: dstr(r.key), spend: r.value,
+          ...(spendCb ? { spendCmp: spendCb[i] ? spendCb[i].value : '' } : {}),
+        })),
+      },
     });
     Cards.chartCard({
       id: 'ads_clicks', title: '每日點擊', el,
@@ -344,6 +464,15 @@
         series: [{ label: '點擊', data: clicksByDate.map(r => r.value), color: '#1565c0' }] },
       compare: clicksCb ? { labels: clicksCb.map(r => dstr(r.key)),
         series: [{ label: '點擊', data: clicksCb.map(r => r.value), color: '#1565c0' }] } : null,
+      exp: {
+        filename: `廣告每日點擊_${state.from}_${state.to}`,
+        fields: [{ key: 'date', label: '日期' }, { key: 'clicks', label: '點擊' },
+                 ...(clicksCb ? [{ key: 'clicksCmp', label: '點擊（比較）' }] : [])],
+        rows: clicksByDate.map((r, i) => ({
+          date: dstr(r.key), clicks: r.value,
+          ...(clicksCb ? { clicksCmp: clicksCb[i] ? clicksCb[i].value : '' } : {}),
+        })),
+      },
     });
     // 行銷活動彙總表：CPC / CPM 前端計算
     const byCamp = new Map();
@@ -380,6 +509,16 @@
         { key: 'cpm', label: 'CPM', num: true },
         { key: 'conversions', label: '轉換', num: true, format: num },
       ],
+      exp: {
+        filename: `廣告活動成效_${state.from}_${state.to}`,
+        fields: [
+          { key: 'campaign_name', label: '行銷活動' }, { key: 'spend', label: '花費' },
+          ...(state.cmpData ? [{ key: 'spendDelta', label: '花費變化' }] : []),
+          { key: 'impressions', label: '曝光' }, { key: 'clicks', label: '點擊' },
+          { key: 'cpc', label: 'CPC' }, { key: 'cpm', label: 'CPM' }, { key: 'conversions', label: '轉換' },
+        ],
+        rows: camps,
+      },
     });
   }
 

@@ -9,6 +9,55 @@
 
   function prefKey(id) { return `traf_chart_type_${id}`; }
 
+  // ── 匯出機制 ─────────────────────────────────────
+  let _exportPost = null;
+  function configureExport({ post }) { _exportPost = post; }
+
+  function downloadBlob(blob, filename) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+
+  function csvOf(headers, rows) {
+    const q = v => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const lines = [headers.map(q).join(','), ...rows.map(r => r.map(q).join(','))];
+    return new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  }
+
+  function openExportModal({ exp, canvas }) {
+    const modal = document.querySelector('#export-modal');
+    const fmts = document.querySelector('#export-formats');
+    const flds = document.querySelector('#export-fields');
+    const formats = [['xlsx', 'Excel (.xlsx)'], ['csv', 'CSV'], ...(canvas ? [['png', 'PNG 圖片']] : [])];
+    fmts.innerHTML = formats.map(([v, t], i) =>
+      `<label><input type="radio" name="exp-fmt" value="${v}" ${i === 0 ? 'checked' : ''}> ${t}</label>`).join('');
+    flds.innerHTML = exp.fields.map(f =>
+      `<label><input type="checkbox" class="exp-field" value="${esc(f.key)}" checked> ${esc(f.label)}</label>`).join('');
+    modal.hidden = false;
+    document.querySelector('#export-cancel').onclick = () => { modal.hidden = true; };
+    document.querySelector('#export-go').onclick = async () => {
+      const fmt = document.querySelector('input[name="exp-fmt"]:checked').value;
+      const picked = [...document.querySelectorAll('.exp-field:checked')].map(i => i.value);
+      const fields = exp.fields.filter(f => picked.includes(f.key));
+      if (!fields.length && fmt !== 'png') return alert('至少勾選一個欄位');
+      try {
+        if (fmt === 'png') {
+          const url = charts[exp.chartId]?.toBase64Image() || canvas.toDataURL('image/png');
+          const a = document.createElement('a'); a.href = url; a.download = `${exp.filename}.png`; a.click();
+        } else {
+          const headers = fields.map(f => f.label);
+          const rows = exp.rows.map(r => fields.map(f => r[f.key] ?? ''));
+          if (fmt === 'csv') downloadBlob(csvOf(headers, rows), `${exp.filename}.csv`);
+          else downloadBlob(await _exportPost({ filename: exp.filename, headers, rows }), `${exp.filename}.xlsx`);
+        }
+        modal.hidden = true;
+      } catch (err) { alert(`匯出失敗：${err.message}`); }
+    };
+  }
+
   // datasets: { labels: [...], series: [{ label, data, color }] }
   // cmp（選用）: { labels, series } 同形狀，非 pie 時以虛線疊圖
   function render(id, canvas, type, ds, cmp) {
@@ -49,7 +98,8 @@
 
   // 圖表卡：types 是這張卡允許的類型，使用者選擇存 localStorage
   // compare（選用）: { labels, series } 同 datasets，非 pie 疊虛線比較圖
-  function chartCard({ id, title, el, types, defaultType, datasets, wide, compare }) {
+  // exp（選用）: { filename, fields: [{key,label}], rows: [{...}] } — 提供時卡頭顯示匯出鈕
+  function chartCard({ id, title, el, types, defaultType, datasets, wide, compare, exp }) {
     const card = document.createElement('div');
     card.className = 'card' + (wide ? ' wide' : '');
     const saved = localStorage.getItem(prefKey(id));
@@ -74,6 +124,13 @@
       sw.appendChild(btn);
     }
     head.appendChild(sw);
+    if (exp) {
+      const eb = document.createElement('button');
+      eb.className = 'export-btn';
+      eb.textContent = '匯出';
+      eb.onclick = () => openExportModal({ exp: { ...exp, chartId: id }, canvas });
+      head.appendChild(eb);
+    }
     card.appendChild(head);
 
     const wrap = document.createElement('div');
@@ -94,7 +151,8 @@
   }
 
   // columns: [{key, label, num?, format?, clsKey?}]
-  function tableCard({ title, el, columns, rows, wide }) {
+  // exp（選用）: { filename, fields: [{key,label}], rows: [{...}] } — 提供時卡頭顯示匯出鈕（無 PNG 選項）
+  function tableCard({ title, el, columns, rows, wide, exp }) {
     const card = document.createElement('div');
     card.className = 'card' + (wide ? ' wide' : '');
     const ths = columns.map(c => `<th class="${c.num ? 'num' : ''}">${esc(c.label)}</th>`).join('');
@@ -104,10 +162,14 @@
         const cls = `${c.num ? 'num' : ''} ${c.clsKey ? esc(r[c.clsKey] || '') : ''}`;
         return `<td class="${cls}">${esc(v)}</td>`;
       }).join('')}</tr>`).join('');
-    card.innerHTML = `<div class="card-head"><h2>${esc(title)}</h2></div>
+    const expBtn = exp ? `<button class="export-btn">匯出</button>` : '';
+    card.innerHTML = `<div class="card-head"><h2>${esc(title)}</h2>${expBtn}</div>
       <table><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
+    if (exp) {
+      card.querySelector('.export-btn').onclick = () => openExportModal({ exp });
+    }
     el.appendChild(card);
   }
 
-  window.Cards = { chartCard, kpiCard, tableCard };
+  window.Cards = { chartCard, kpiCard, tableCard, configureExport };
 })();
