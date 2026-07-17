@@ -148,7 +148,9 @@
   // ── Sortable 排序記憶 ────────────────────────────
   function initSortable(tabEl, tabName) {
     const key = `traf_card_order_${tabName}`;
-    const saved = JSON.parse(localStorage.getItem(key) || '[]');
+    let saved = [];
+    try { saved = JSON.parse(localStorage.getItem(key) || '[]'); } catch (_) { saved = []; }
+    if (!Array.isArray(saved)) saved = [];
     if (saved.length) {
       for (const cid of saved) {
         const elCard = tabEl.querySelector(`[data-cid="${CSS.escape(cid)}"]`);
