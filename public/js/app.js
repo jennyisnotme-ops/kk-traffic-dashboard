@@ -94,7 +94,7 @@
         return res.blob();
       },
     });
-    await loadReports();
+    try { await loadReports(); } catch (_) { state.reports = []; }
     load();
   }
 
@@ -583,7 +583,7 @@
   // data: /api/data 回傳；metric: config.metrics 的一項；axis: 'YYYY-MM-DD'[]
   // DATE 欄位已是 'YYYY-MM-DD' 純字串；taipeiDate 為防禦性正規化（對純字串為 no-op）
   function metricSeries(data, metric, axis) {
-    const def = metricDef(metric);
+    const def = metricDef(metric) || { label: `${metric.source}.${metric.field}`, color: '#78909c' };
     const byDate = new Map();
     if (metric.source === 'ga_channels') {
       for (const r of data.ga_channels) if (r.channel === metric.channel)
