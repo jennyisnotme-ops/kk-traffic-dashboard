@@ -12,6 +12,7 @@
 
 require('dotenv').config();
 
+const net = require('net');
 const path = require('path');
 const { spawn } = require('child_process');
 const puppeteer = require('puppeteer');
@@ -45,6 +46,23 @@ async function check(name, fn) {
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// 起跑前先確認測試用連接埠沒被占用（例如上一次執行沒清乾淨的 server 子行程），
+// 否則 spawn 出來的 server 會 EADDRINUSE 掛掉，只看得到籠統的 /health 逾時訊息。
+function assertPortFree(port) {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.once('error', err => {
+      if (err.code === 'EADDRINUSE') {
+        reject(new Error(`連接埠 ${port} 已被占用（可能是上次未清乾淨的 server），請先 kill 再重跑`));
+      } else {
+        reject(err);
+      }
+    });
+    probe.once('listening', () => probe.close(resolve));
+    probe.listen(port, '127.0.0.1');
+  });
+}
 
 async function waitForHealth(timeoutMs) {
   const deadline = Date.now() + timeoutMs;
@@ -101,13 +119,48 @@ async function main() {
     throw new Error('未設定 INIT_ADMIN_SECRET（.env），無法登入測試');
   }
 
+  // 起跑前先確認連接埠可用，占用時立即失敗並給出可行動的訊息，
+  // 而不是讓子行程 EADDRINUSE 後空等 30 秒 /health 逾時。
+  await assertPortFree(PORT);
+
   console.log(`啟動 server（PORT=${PORT}）…`);
   const server = spawnServer();
   let browser = null;
   const pageErrors = [];
 
+  // server 子行程若在就緒前就掛掉（缺環境變數、資料庫連不上等），
+  // 不要傻等 /health 逾時，直接以子行程輸出報錯。
+  let serverExitedEarly = null;
+  server.once('exit', (code, signal) => {
+    serverExitedEarly = `server 子行程提前結束（code=${code}, signal=${signal}）`;
+  });
+
   try {
-    await waitForHealth(HEALTH_TIMEOUT_MS);
+    let healthSettled = false;
+    // 子行程提前結束偵測：與 waitForHealth 賽跑；health 先完成時此輪詢會安靜收尾
+    //（healthSettled 讓迴圈退出、附掛的 catch 吞掉輸家的 rejection，避免 unhandledRejection）。
+    const earlyExitWatch = (async () => {
+      while (serverExitedEarly === null && !healthSettled) await sleep(200);
+      if (serverExitedEarly !== null && !healthSettled) throw new Error(serverExitedEarly);
+    })();
+    try {
+      await Promise.race([waitForHealth(HEALTH_TIMEOUT_MS), earlyExitWatch]);
+    } catch (err) {
+      // /health 逾時或子行程提前結束時，子行程輸出是最有用的線索，
+      // 必須在這裡就印出來（下方 finally 的輸出區塊只在有檢查失敗時才印，
+      // 此路徑尚未累積任何失敗，走不到那裡）。
+      // 同樣原樣轉印 server 輸出，仰賴 server.js 不落機密的原則（見 finally 區塊註解）。
+      const log = server._smokeLog();
+      if (log.trim()) {
+        console.log('\n--- server 輸出（啟動失敗診斷）---');
+        console.log(log.slice(-3000));
+      }
+      throw err;
+    } finally {
+      healthSettled = true;
+      earlyExitWatch.catch(() => {});
+    }
+    server.removeAllListeners('exit');
     ok('server /health 就緒');
 
     browser = await puppeteer.launch({
@@ -213,6 +266,9 @@ async function main() {
 
     // g. 比較模式：勾選 → 第二次 /api/data 請求、出現 .kpi-delta；取消勾選 → delta 消失
     await check('比較模式：勾選觸發第二次請求並顯示 .kpi-delta；取消後消失', async () => {
+      // 請求計數的前提：/api/data 只會由前端明確的 load() 呼叫觸發（勾選比較、
+      // 換日期區間等），app 沒有背景輪詢。若未來加入自動刷新/輪詢，
+      // 這裡的 before/after 計數就可能被背景請求干擾，需改為比對請求參數。
       let dataRequestCount = 0;
       const onRequest = req => {
         if (req.url().includes('/api/data')) dataRequestCount += 1;
@@ -358,6 +414,9 @@ async function main() {
       // 給子行程一點時間乾淨結束，避免殘留 port 佔用
       await sleep(300);
     }
+    // 注意：這裡原樣轉印 server 子行程的 stdout/stderr，
+    // 前提是 server.js 從不把密碼、token、request body 等機密寫進 log；
+    // 若未來 server 端新增日誌，需維持這個不落機密的原則。
     if (server && server._smokeLog && failures.length > 0) {
       const log = server._smokeLog();
       if (log.trim()) {
