@@ -95,3 +95,6 @@ main { padding: 20px; }
   padding: 3px 8px; font-size: 12px; border-radius: 12px; margin-left: 4px; }
 #add-report-btn { padding: 10px 20px; border: 1px dashed #90a4ae; border-radius: 12px;
   background: #fff; cursor: pointer; font-size: 14px; color: #455a64; }
+
+/* hidden 屬性必須壓過任何 display 規則（修正彈窗一載入就顯示且關不掉） */
+[hidden] { display: none !important; }
