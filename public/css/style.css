@@ -44,7 +44,9 @@ body { font-family: 'Microsoft JhengHei', system-ui, sans-serif; background: var
 #sidebar { width: 240px; flex: 0 0 240px; background: var(--c-bg-sidebar);
   border-right: 1px solid var(--c-border-soft); display: flex; flex-direction: column;
   position: sticky; top: 0; height: 100vh; }
-#sidebar-logo { font-size: 16px; font-weight: bold; padding: 18px 16px; }
+#sidebar-logo { display: flex; align-items: center; gap: 8px; font-size: 16px;
+  font-weight: bold; padding: 16px; }
+#sidebar-logo img { width: 28px; height: 28px; object-fit: contain; flex: 0 0 auto; }
 #menu-toggle { display: none; }
 #menu { display: flex; flex-direction: column; gap: 2px; padding: 0 10px; flex: 1; overflow-y: auto; }
 .menu-item { display: block; width: 100%; text-align: left; padding: 10px 12px; border: 0;
