@@ -1,7 +1,8 @@
 // scripts/smoke_browser.js — Puppeteer 瀏覽器煙霧測試小助理
 //
 // 啟動一份 server 子行程（PORT=3777），用 headless Chrome 走一輪關鍵使用者流程，
-// 確認登入、頁籤、比較、匯出彈窗、報表彈窗、圖表類型記憶等功能沒有壞掉。
+// 確認登入、左側選單（含粉專三分頁）、比較、匯出彈窗、報表彈窗、圖表類型記憶、
+// 手機 RWD 漢堡選單等功能沒有壞掉。
 // 特別針對「彈窗一載入就顯示」這類 CSS [hidden] 被 display:flex 蓋掉的回歸問題，
 // 一律用「計算後樣式」（offsetParent / getComputedStyle().display）檢查可見性，
 // 不能只看 hidden attribute 本身。
@@ -230,37 +231,59 @@ async function main() {
     // e. 總覽頁：至少 4 張 .card
     await check('總覽頁：10 秒內至少渲染 4 張 .card', async () => {
       await page.waitForFunction(
-        () => document.querySelectorAll('#tab-overview .card').length >= 4,
+        () => document.querySelectorAll('#page-overview .card').length >= 4,
         { timeout: 10000 },
       );
     });
 
-    // f. 各頁籤點擊 → 對應 section 啟用且有內容
-    const tabs = ['ga', 'fb', 'ads', 'custom'];
-    for (const tab of tabs) {
-      await check(`頁籤切換：${tab} 分頁啟用且有內容`, async () => {
-        await page.click(`#tabs button[data-tab="${tab}"]`);
-        await page.waitForFunction(
-          t => document.querySelector(`#tab-${t}`)?.classList.contains('active'),
-          { timeout: 5000 },
-          tab,
-        );
-        await page.waitForFunction(
-          t => {
-            const sec = document.querySelector(`#tab-${t}`);
-            if (!sec) return false;
-            return sec.querySelectorAll('.card').length > 0 || sec.querySelector('#add-report-btn');
-          },
-          { timeout: 10000 },
-          tab,
-        );
+    // 共用：點選單項 → 對應 #page-* 啟用且有內容
+    async function assertPageRenders(pageKey) {
+      await page.click(`.menu-item[data-page="${pageKey}"]`);
+      await page.waitForFunction(
+        p => document.querySelector(`#page-${p}`)?.classList.contains('active'),
+        { timeout: 5000 },
+        pageKey,
+      );
+      await page.waitForFunction(
+        p => {
+          const sec = document.querySelector(`#page-${p}`);
+          if (!sec) return false;
+          return sec.querySelectorAll('.card').length > 0 || sec.querySelector('#add-report-btn');
+        },
+        { timeout: 10000 },
+        pageKey,
+      );
+    }
+
+    // f. 選單直接項目點擊 → 對應 page 啟用且有內容
+    for (const pageKey of ['ga', 'custom']) {
+      await check(`選單切換：${pageKey} 頁啟用且有內容`, async () => {
+        await assertPageRenders(pageKey);
+      });
+    }
+
+    // f2. 粉專群組：預設收合，點父項展開子選單
+    await check('粉專群組：點擊父項展開子選單', async () => {
+      const subVisibleBefore = await isComputedVisible(page, '#menu-fb .menu-sub');
+      if (subVisibleBefore) throw new Error('.menu-sub 應預設收合');
+      await page.click('.menu-parent[data-group="fb"]');
+      await page.waitForFunction(
+        () => getComputedStyle(document.querySelector('#menu-fb .menu-sub')).display !== 'none',
+        { timeout: 5000 },
+      );
+    });
+
+    // f3. 粉專三個子頁：各自可點且渲染內容
+    for (const pageKey of ['fb_insights', 'fb_posts', 'fb_ads']) {
+      await check(`粉專子頁：${pageKey} 啟用且有內容`, async () => {
+        await assertPageRenders(pageKey);
       });
     }
 
     // 切回總覽，方便後續步驟
-    await page.click('#tabs button[data-tab="overview"]');
+    await page.click('.menu-item[data-page="overview"]');
     await page.waitForFunction(
-      () => document.querySelector('#tab-overview')?.classList.contains('active'),
+      () => document.querySelector('#page-overview')?.classList.contains('active'),
       { timeout: 5000 },
     );
 
@@ -279,20 +302,20 @@ async function main() {
         await page.click('#compare-on');
         // 比較模式預設 prev（前一期），勾選後會自動 load()
         await page.waitForFunction(
-          () => document.querySelectorAll('#tab-overview .kpi-delta').length > 0,
+          () => document.querySelectorAll('#page-overview .kpi-delta').length > 0,
           { timeout: 10000 },
         );
         const afterCount = dataRequestCount;
         if (afterCount <= beforeCount) {
           throw new Error(`勾選比較後未偵測到新的 /api/data 請求（before=${beforeCount}, after=${afterCount}）`);
         }
-        const deltaCount = await page.$$eval('#tab-overview .kpi-delta', els => els.length);
+        const deltaCount = await page.$$eval('#page-overview .kpi-delta', els => els.length);
         if (deltaCount < 1) throw new Error('勾選比較後找不到 .kpi-delta');
 
         // 取消勾選
         await page.click('#compare-on');
         await page.waitForFunction(
-          () => document.querySelectorAll('#tab-overview .kpi-delta').length === 0,
+          () => document.querySelectorAll('#page-overview .kpi-delta').length === 0,
           { timeout: 10000 },
         );
       } finally {
@@ -302,9 +325,9 @@ async function main() {
 
     // h. 匯出彈窗
     await check('匯出彈窗：開啟顯示格式/欄位、取消後隱藏', async () => {
-      const hasExportBtn = await page.$('#tab-overview .export-btn');
+      const hasExportBtn = await page.$('#page-overview .export-btn');
       if (!hasExportBtn) throw new Error('總覽頁找不到 .export-btn');
-      await page.click('#tab-overview .export-btn');
+      await page.click('#page-overview .export-btn');
       await page.waitForFunction(
         () => getComputedStyle(document.querySelector('#export-modal')).display !== 'none',
         { timeout: 5000 },
@@ -322,9 +345,9 @@ async function main() {
 
     // i. 報表彈窗（自訂報表頁）
     await check('報表彈窗：新增報表開啟/取消', async () => {
-      await page.click('#tabs button[data-tab="custom"]');
+      await page.click('.menu-item[data-page="custom"]');
       await page.waitForFunction(
-        () => document.querySelector('#tab-custom')?.classList.contains('active'),
+        () => document.querySelector('#page-custom')?.classList.contains('active'),
         { timeout: 5000 },
       );
       await page.waitForSelector('#add-report-btn', { timeout: 10000 });
@@ -342,15 +365,15 @@ async function main() {
 
     // j. 圖表類型記憶（localStorage 持久化）
     await check('圖表類型記憶：切換長條後重新載入仍為 active', async () => {
-      await page.click('#tabs button[data-tab="overview"]');
+      await page.click('.menu-item[data-page="overview"]');
       await page.waitForFunction(
-        () => document.querySelector('#tab-overview')?.classList.contains('active'),
+        () => document.querySelector('#page-overview')?.classList.contains('active'),
         { timeout: 5000 },
       );
-      await page.waitForSelector('#tab-overview .card .type-switch button', { timeout: 10000 });
+      await page.waitForSelector('#page-overview .card .type-switch button', { timeout: 10000 });
       // 找第一張圖表卡的「長條」按鈕（依 TYPE_LABEL 文字比對）
       const clicked = await page.evaluate(() => {
-        const card = document.querySelector('#tab-overview .card .type-switch');
+        const card = document.querySelector('#page-overview .card .type-switch');
         if (!card) return false;
         const btn = [...card.querySelectorAll('button')].find(b => b.textContent.trim() === '長條');
         if (!btn) return false;
@@ -359,7 +382,7 @@ async function main() {
       });
       if (!clicked) throw new Error('找不到第一張圖表卡的「長條」切換按鈕');
       await page.waitForFunction(() => {
-        const card = document.querySelector('#tab-overview .card .type-switch');
+        const card = document.querySelector('#page-overview .card .type-switch');
         const btn = card && [...card.querySelectorAll('button')].find(b => b.textContent.trim() === '長條');
         return btn && btn.classList.contains('active');
       }, { timeout: 5000 });
@@ -388,15 +411,53 @@ async function main() {
         return main && getComputedStyle(main).display !== 'none';
       }, { timeout: 10000 });
       await page.waitForFunction(
-        () => document.querySelectorAll('#tab-overview .card').length >= 4,
+        () => document.querySelectorAll('#page-overview .card').length >= 4,
         { timeout: 10000 },
       );
       const stillActive = await page.evaluate(() => {
-        const card = document.querySelector('#tab-overview .card .type-switch');
+        const card = document.querySelector('#page-overview .card .type-switch');
         const btn = card && [...card.querySelectorAll('button')].find(b => b.textContent.trim() === '長條');
         return Boolean(btn && btn.classList.contains('active'));
       });
       if (!stillActive) throw new Error('重新載入並登入後，「長條」按鈕未保持 active（localStorage 記憶失效）');
+    });
+
+    // j2. RWD：手機視窗（375×800）漢堡選單存在且可展開/收合
+    await check('RWD：375px 視窗漢堡選單可展開/收合', async () => {
+      await page.setViewport({ width: 375, height: 800 });
+      await sleep(300);
+      const toggleVisible = await isComputedVisible(page, '#menu-toggle');
+      if (!toggleVisible) throw new Error('#menu-toggle 未顯示');
+      // 側欄手機版應預設收合（transform 移出畫面）
+      const collapsed = await page.evaluate(() => {
+        const sb = document.querySelector('#sidebar');
+        return !sb.classList.contains('mobile-open') && sb.getBoundingClientRect().right <= 0;
+      });
+      if (!collapsed) throw new Error('#sidebar 手機版應預設收合在畫面外');
+      await page.click('#menu-toggle');
+      // mobile-open class 是同步加上的，但滑入動畫（transform transition 0.2s）還在跑，
+      // 必須等側欄真的完全滑進畫面（left >= 0）再點選單項，否則點擊座標仍在畫面外。
+      await page.waitForFunction(
+        () => document.querySelector('#sidebar').classList.contains('mobile-open')
+          && getComputedStyle(document.querySelector('#sidebar-overlay')).display !== 'none'
+          && document.querySelector('#sidebar').getBoundingClientRect().left >= 0,
+        { timeout: 5000 },
+      );
+      // 點選單項後選單自動收合、頁面切換成功
+      await page.click('.menu-item[data-page="ga"]');
+      await page.waitForFunction(
+        () => !document.querySelector('#sidebar').classList.contains('mobile-open')
+          && document.querySelector('#page-ga')?.classList.contains('active'),
+        { timeout: 5000 },
+      );
+      // 還原桌面視窗與總覽頁
+      await page.setViewport({ width: 1280, height: 900 });
+      await sleep(300);
+      await page.click('.menu-item[data-page="overview"]');
+      await page.waitForFunction(
+        () => document.querySelector('#page-overview')?.classList.contains('active'),
+        { timeout: 5000 },
+      );
     });
 
     // k. 全程零頁面錯誤

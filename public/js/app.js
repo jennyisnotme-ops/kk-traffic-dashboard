@@ -1,4 +1,4 @@
-// app.js — 登入、日期區間、載入 /api/data、渲染四個頁籤
+// app.js — 登入、日期區間、載入 /api/data、渲染六個頁面（左側選單切換見 sidebar.js）
 (function () {
   const $ = s => document.querySelector(s);
   const state = { secret: localStorage.getItem('traf_secret') || '',
@@ -98,15 +98,10 @@
     load();
   }
 
-  // ── 頁籤與日期列 ─────────────────────────────────
-  document.querySelectorAll('#tabs button').forEach(btn => {
-    btn.onclick = () => {
-      document.querySelectorAll('#tabs button').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-      btn.classList.add('active');
-      $(`#tab-${btn.dataset.tab}`).classList.add('active');
-    };
-  });
+  // ── 左側選單與日期列 ─────────────────────────────
+  const PAGES = ['overview', 'ga', 'fb_insights', 'fb_posts', 'fb_ads', 'custom'];
+  Sidebar.init({ pages: PAGES, onNavigate: () => {} });   // 導覽只切 .page.active，資料已預先渲染
+
   $('#date-preset').addEventListener('change', () => {
     const v = $('#date-preset').value;
     $('#custom-range').hidden = v !== 'custom';
@@ -180,12 +175,13 @@
       const r = cmpRangeUsed();
       state.cmpData = (r.from && r.to) ? await api(q(r)) : null;
     } else state.cmpData = null;
-    renderStatus(); renderOverview(); renderGa(); renderFb(); renderAds(); renderCustom();
-    initSortable($('#tab-overview'), 'overview');
-    initSortable($('#tab-ga'), 'ga');
-    initSortable($('#tab-fb'), 'fb');
-    initSortable($('#tab-ads'), 'ads');
-    initSortable($('#tab-custom'), 'custom');
+    renderStatus(); renderOverview(); renderGa(); renderFbInsights(); renderFbPosts(); renderAds(); renderCustom();
+    initSortable($('#page-overview'), 'overview');
+    initSortable($('#page-ga'), 'ga');
+    initSortable($('#page-fb_insights'), 'fb');
+    initSortable($('#page-fb_posts'), 'fb_posts');
+    initSortable($('#page-fb_ads'), 'ads');
+    initSortable($('#page-custom'), 'custom');
   }
 
   const num = v => Number(v || 0).toLocaleString('zh-TW');
@@ -217,7 +213,7 @@
   }
 
   function renderOverview() {
-    const el = $('#tab-overview');
+    const el = $('#page-overview');
     el.innerHTML = '';
     const d = state.data;
     Cards.kpiCard({ el, label: 'GA 使用者（區間加總）', value: num(sum(d.ga_daily, 'users')),
@@ -291,7 +287,7 @@
   }
 
   function renderGa() {
-    const el = $('#tab-ga');
+    const el = $('#page-ga');
     el.innerHTML = '';
     const d = state.data;
     Cards.chartCard({
@@ -387,8 +383,8 @@
     });
   }
 
-  function renderFb() {
-    const el = $('#tab-fb');
+  function renderFbInsights() {
+    const el = $('#page-fb_insights');
     el.innerHTML = '';
     const d = state.data;
     Cards.chartCard({
@@ -435,6 +431,11 @@
         })),
       },
     });
+  }
+
+  function renderFbPosts() {
+    const el = $('#page-fb_posts');
+    el.innerHTML = '';
     const postRows = state.data.fb_posts.map(p => ({
       ...p, created_at: taipeiDate(p.created_at),
     }));
@@ -462,7 +463,7 @@
   }
 
   function renderAds() {
-    const el = $('#tab-ads');
+    const el = $('#page-fb_ads');
     el.innerHTML = '';
     const d = state.data;
     const byDate = groupSum(d.ads_daily, 'date', 'spend');
@@ -601,7 +602,7 @@
   async function loadReports() { state.reports = (await api('/api/reports')).reports; }
 
   function renderCustom() {
-    const el = $('#tab-custom');
+    const el = $('#page-custom');
     el.innerHTML = '';
     const axis = dateAxis(state.from, state.to);
     for (const rep of state.reports) {

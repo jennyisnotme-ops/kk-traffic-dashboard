@@ -22,55 +22,67 @@
 
 <!-- 主畫面 -->
 <div id="main" hidden>
-  <header>
-    <h1>KK 流量儀表板</h1>
-    <nav id="tabs">
-      <button data-tab="overview" class="active">總覽</button>
-      <button data-tab="ga">GA 流量</button>
-      <button data-tab="fb">粉專成效</button>
-      <button data-tab="ads">廣告成效</button>
-      <button data-tab="custom">自訂報表</button>
+  <aside id="sidebar">
+    <div id="sidebar-logo">KK 流量儀表板</div>
+    <nav id="menu">
+      <button class="menu-item active" data-page="overview">總覽</button>
+      <button class="menu-item" data-page="ga">GA 流量</button>
+      <div class="menu-group" id="menu-fb">
+        <button class="menu-item menu-parent" data-group="fb">粉專</button>
+        <div class="menu-sub">
+          <button class="menu-item sub" data-page="fb_insights">粉專成效</button>
+          <button class="menu-item sub" data-page="fb_posts">貼文成效</button>
+          <button class="menu-item sub" data-page="fb_ads">廣告</button>
+        </div>
+      </div>
+      <button class="menu-item" data-page="custom">自訂報表</button>
     </nav>
-    <div id="date-controls">
-      <select id="date-preset">
-        <option value="7">近 7 天</option>
-        <option value="30" selected>近 30 天</option>
-        <option value="90">近 90 天</option>
-        <option value="thisMonth">本月</option>
-        <option value="lastMonth">上月</option>
-        <option value="custom">自訂區間</option>
-      </select>
-      <span id="custom-range" hidden>
-        <input type="date" id="date-from"> ~ <input type="date" id="date-to">
-        <button id="date-apply">套用</button>
-      </span>
-      <label id="compare-label"><input type="checkbox" id="compare-on"> 比較</label>
-      <span id="compare-controls" hidden>
-        <select id="compare-mode">
-          <option value="prev" selected>前一期</option>
-          <option value="custom">自訂區間</option>
-        </select>
-        <span id="compare-custom" hidden>
-          <input type="date" id="cmp-from"> ~ <input type="date" id="cmp-to">
-          <button id="compare-apply">套用比較</button>
-        </span>
-      </span>
-    </div>
-    <div id="status-bar">
+    <div id="sidebar-bottom">
       <span id="last-update"></span>
       <button id="refetch-btn">手動重抓</button>
       <button id="logout-btn">登出</button>
     </div>
-  </header>
-
-  <main>
-    <section id="tab-overview" class="tab active"></section>
-    <section id="tab-ga" class="tab"></section>
-    <section id="tab-fb" class="tab"></section>
-    <section id="tab-ads" class="tab"></section>
-    <section id="tab-custom" class="tab"></section>
-  </main>
+  </aside>
+  <div id="content">
+    <button id="menu-toggle" aria-label="開啟選單">☰</button>
+    <header id="topbar">
+      <div id="date-controls">
+        <select id="date-preset">
+          <option value="7">近 7 天</option>
+          <option value="30" selected>近 30 天</option>
+          <option value="90">近 90 天</option>
+          <option value="thisMonth">本月</option>
+          <option value="lastMonth">上月</option>
+          <option value="custom">自訂區間</option>
+        </select>
+        <span id="custom-range" hidden>
+          <input type="date" id="date-from"> ~ <input type="date" id="date-to">
+          <button id="date-apply">套用</button>
+        </span>
+        <label id="compare-label"><input type="checkbox" id="compare-on"> 比較</label>
+        <span id="compare-controls" hidden>
+          <select id="compare-mode">
+            <option value="prev" selected>前一期</option>
+            <option value="custom">自訂區間</option>
+          </select>
+          <span id="compare-custom" hidden>
+            <input type="date" id="cmp-from"> ~ <input type="date" id="cmp-to">
+            <button id="compare-apply">套用比較</button>
+          </span>
+        </span>
+      </div>
+    </header>
+    <main>
+      <section id="page-overview" class="page active"></section>
+      <section id="page-ga" class="page"></section>
+      <section id="page-fb_insights" class="page"></section>
+      <section id="page-fb_posts" class="page"></section>
+      <section id="page-fb_ads" class="page"></section>
+      <section id="page-custom" class="page"></section>
+    </main>
+  </div>
 </div>
+<div id="sidebar-overlay" hidden></div>
 
 <div id="export-modal" hidden>
   <div id="export-panel">
@@ -97,6 +109,7 @@
 </div>
 
 <script src="/js/cards.js"></script>
+<script src="/js/sidebar.js"></script>
 <script src="/js/app.js"></script>
 </body>
 </html>
