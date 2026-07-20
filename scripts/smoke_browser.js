@@ -365,6 +365,61 @@ async function main() {
       );
     });
 
+    // i2. 帳號管理（admin 專屬）：選單項可見、點擊渲染表格、新增彈窗開關不送出
+    await check('帳號管理：admin 可見選單項，點擊渲染表格', async () => {
+      const usersMenuVisible = await isComputedVisible(page, '#menu-users');
+      if (!usersMenuVisible) throw new Error('#menu-users 應對 admin 顯示');
+      await page.click('#menu-users');
+      await page.waitForFunction(
+        () => document.querySelector('#page-users')?.classList.contains('active'),
+        { timeout: 5000 },
+      );
+      await page.waitForFunction(
+        () => document.querySelectorAll('#page-users table tbody tr').length > 0,
+        { timeout: 10000 },
+      );
+    });
+
+    await check('帳號管理：新增帳號彈窗開啟/取消（不送出）', async () => {
+      await page.waitForSelector('#add-user-btn', { timeout: 5000 });
+      await page.click('#add-user-btn');
+      await page.waitForFunction(
+        () => getComputedStyle(document.querySelector('#user-modal')).display !== 'none',
+        { timeout: 5000 },
+      );
+      const pageCbCount = await page.$$eval('.user-page-cb', els => els.length);
+      if (pageCbCount !== 6) throw new Error(`預期 6 個頁面權限勾選框，實際 ${pageCbCount}`);
+      await page.click('#user-cancel');
+      await page.waitForFunction(
+        () => getComputedStyle(document.querySelector('#user-modal')).display === 'none',
+        { timeout: 5000 },
+      );
+    });
+
+    // i3. 設定→改密碼：群組展開、子選單可到達
+    await check('設定群組：展開後可點擊到達改密碼頁', async () => {
+      const subVisibleBefore = await isComputedVisible(page, '#menu-settings .menu-sub');
+      if (subVisibleBefore) throw new Error('#menu-settings .menu-sub 應預設收合');
+      await page.click('.menu-parent[data-group="settings"]');
+      await page.waitForFunction(
+        () => getComputedStyle(document.querySelector('#menu-settings .menu-sub')).display !== 'none',
+        { timeout: 5000 },
+      );
+      await page.click('.menu-item[data-page="settings_password"]');
+      await page.waitForFunction(
+        () => document.querySelector('#page-settings_password')?.classList.contains('active'),
+        { timeout: 5000 },
+      );
+      await page.waitForSelector('#settings-password-form', { timeout: 5000 });
+    });
+
+    // 切回總覽，方便後續步驟
+    await page.click('.menu-item[data-page="overview"]');
+    await page.waitForFunction(
+      () => document.querySelector('#page-overview')?.classList.contains('active'),
+      { timeout: 5000 },
+    );
+
     // j. 圖表類型記憶（localStorage 持久化）
     await check('圖表類型記憶：切換長條後重新載入仍為 active', async () => {
       await page.click('.menu-item[data-page="overview"]');

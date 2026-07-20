@@ -101,19 +101,33 @@
     });
     applyRoleUI();
     const allowed = new Set(state.me.allowed_pages || []);
-    Sidebar.init({ pages: PAGES.filter(p => allowed.has(p)), onNavigate: () => {} });
+    // 「帳號管理」與「設定」子頁不受 allowed_pages 限制：帳號管理只看 role==='admin'，
+    // 設定頁（改密碼/外觀主題）任何已登入使用者皆可見，故一律加進 Sidebar 的合法頁面清單，
+    // 讓 sidebar.js 的 navigate() 不會因為不在 pageSet 而擋掉點擊。
+    const extraPages = SETTINGS_PAGES.concat(isAdmin() ? ['users'] : []);
+    Sidebar.init({ pages: PAGES.filter(p => allowed.has(p)).concat(extraPages), onNavigate: onNavigatePage });
     try { await loadReports(); } catch (_) { state.reports = []; }
     load();
   }
+
+  function isAdmin() { return state.me?.role === 'admin'; }
 
   // 依角色隱藏體驗優化用的按鈕/操作（非安全邊界，後端已各自 403）
   function applyRoleUI() {
     const isUser = state.me?.role === 'user';
     $('#refetch-btn').hidden = isUser;
+    $('#menu-users').hidden = !isAdmin();
+  }
+
+  function onNavigatePage(page) {
+    if (page === 'users') renderUsers();
+    else if (page === 'settings_password') renderSettingsPassword();
+    // settings_theme：空殼頁，3c 再填內容，這裡不需要處理
   }
 
   // ── 左側選單與日期列 ─────────────────────────────
   const PAGES = ['overview', 'ga', 'fb_insights', 'fb_posts', 'fb_ads', 'custom'];
+  const SETTINGS_PAGES = ['settings_password', 'settings_theme'];
 
   $('#date-preset').addEventListener('change', () => {
     const v = $('#date-preset').value;
@@ -767,6 +781,167 @@
         await loadReports(); renderCustom();
       } catch (err) { alert(`儲存失敗：${err.message}`); }
     };
+  }
+
+  // ── 帳號管理（僅 admin）────────────────────────────
+  const PAGE_LABELS = {
+    overview: '總覽', ga: 'GA 流量', fb_insights: '粉專成效',
+    fb_posts: '貼文成效', fb_ads: '廣告', custom: '自訂報表',
+  };
+
+  let usersCache = [];
+
+  async function renderUsers() {
+    const el = $('#page-users');
+    if (!isAdmin()) return renderNoPermission(el);
+    el.innerHTML = '<button id="add-user-btn" type="button">＋ 新增帳號</button><div id="users-table-wrap"></div>';
+    $('#add-user-btn').onclick = () => openUserModal(null);
+    try {
+      usersCache = (await api('/api/users')).users || [];
+    } catch (err) {
+      $('#users-table-wrap').innerHTML = `<p class="form-error">載入失敗：${esc(err.message)}</p>`;
+      return;
+    }
+    renderUsersTable();
+  }
+
+  function renderUsersTable() {
+    const wrap = $('#users-table-wrap');
+    if (!wrap) return;
+    const rows = usersCache.map(u => {
+      const pagesBadges = (u.allowed_pages || [])
+        .map(p => `<span class="badge">${esc(PAGE_LABELS[p] || p)}</span>`).join('') || '—';
+      const roleLabel = u.role === 'admin' ? '管理員' : '一般使用者';
+      const statusBadge = u.enabled
+        ? '<span class="badge">啟用中</span>' : '<span class="badge disabled">已停用</span>';
+      return `<tr data-id="${u.id}">
+        <td>${esc(u.username)}</td>
+        <td>${esc(u.display_name)}</td>
+        <td>${esc(roleLabel)}</td>
+        <td>${statusBadge}</td>
+        <td>${pagesBadges}</td>
+        <td class="row-actions">
+          <button type="button" class="edit-user-btn">編輯</button>
+          <button type="button" class="reset-pw-btn">重設密碼</button>
+        </td>
+      </tr>`;
+    }).join('');
+    wrap.innerHTML = `<table>
+      <thead><tr><th>帳號</th><th>顯示名稱</th><th>角色</th><th>狀態</th><th>可視頁面</th><th>操作</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+    wrap.querySelectorAll('tr[data-id]').forEach(tr => {
+      const id = Number(tr.dataset.id);
+      const user = usersCache.find(u => u.id === id);
+      tr.querySelector('.edit-user-btn').onclick = () => openUserModal(user);
+      tr.querySelector('.reset-pw-btn').onclick = () => openResetPasswordModal(user);
+    });
+  }
+
+  function userPagesCheckboxesHtml(checked) {
+    const set = new Set(checked || []);
+    return PAGES.map(p => `<label class="page-check">
+        <input type="checkbox" class="user-page-cb" value="${p}" ${set.has(p) ? 'checked' : ''}> ${esc(PAGE_LABELS[p])}
+      </label>`).join('');
+  }
+
+  function openUserModal(user) {   // user: 既有帳號物件（編輯模式）或 null（新增模式）
+    const modal = $('#user-modal');
+    const isEdit = Boolean(user);
+    $('#user-title').textContent = isEdit ? '編輯帳號' : '新增帳號';
+    $('#user-error').textContent = '';
+    $('#user-username').value = isEdit ? user.username : '';
+    $('#user-username').disabled = isEdit;
+    $('#user-password').value = '';
+    $('#user-password-field').hidden = isEdit;   // 編輯模式不含密碼欄，改用「重設密碼」
+    $('#user-display-name').value = isEdit ? user.display_name : '';
+    document.querySelectorAll('input[name="user-role-radio"]').forEach(r => {
+      r.checked = r.value === (isEdit ? user.role : 'user');
+    });
+    $('#user-pages').innerHTML = '可視頁面：' + userPagesCheckboxesHtml(isEdit ? user.allowed_pages : ['overview']);
+    // enabled 欄位：新增帳號一律預設啟用（後端 schema 預設值），編輯時才顯示切換，
+    // 且必須讀入目前值 —— PUT /api/users/:id 的 enabled 為 Boolean() 強制轉型、無額外檢查，
+    // 若送出 undefined 會被轉成 false，靜默停用帳號，所以務必以目前列的值預先勾選。
+    $('#user-enabled-field').hidden = !isEdit;
+    $('#user-enabled').checked = isEdit ? Boolean(user.enabled) : true;
+
+    modal.hidden = false;
+    $('#user-cancel').onclick = () => { modal.hidden = true; };
+    $('#user-save').onclick = async () => {
+      const display_name = $('#user-display-name').value.trim();
+      const role = document.querySelector('input[name="user-role-radio"]:checked')?.value || 'user';
+      const allowed_pages = [...document.querySelectorAll('.user-page-cb:checked')].map(cb => cb.value);
+      $('#user-error').textContent = '';
+      try {
+        if (isEdit) {
+          const enabled = $('#user-enabled').checked;   // 一律明確送出目前值，絕不省略
+          const body = JSON.stringify({ display_name, role, allowed_pages, enabled });
+          await api(`/api/users/${user.id}`, { method: 'PUT', body });
+        } else {
+          const username = $('#user-username').value.trim();
+          const password = $('#user-password').value;
+          const body = JSON.stringify({ username, password, display_name, role, allowed_pages });
+          await api('/api/users', { method: 'POST', body });
+        }
+        modal.hidden = true;
+        await renderUsers();
+      } catch (err) {
+        $('#user-error').textContent = err.message === '帳號已存在' ? '帳號已存在，請換一個' : err.message;
+      }
+    };
+  }
+
+  function openResetPasswordModal(user) {
+    const modal = $('#reset-pw-modal');
+    $('#reset-pw-error').textContent = '';
+    $('#reset-pw-new').value = '';
+    modal.hidden = false;
+    $('#reset-pw-cancel').onclick = () => { modal.hidden = true; };
+    $('#reset-pw-save').onclick = async () => {
+      const newPassword = $('#reset-pw-new').value;
+      $('#reset-pw-error').textContent = '';
+      try {
+        const body = JSON.stringify({ newPassword });
+        await api(`/api/users/${user.id}/reset-password`, { method: 'POST', body });
+        modal.hidden = true;
+      } catch (err) {
+        $('#reset-pw-error').textContent = err.message;
+      }
+    };
+  }
+
+  // ── 設定：改密碼 ─────────────────────────────────
+  function renderSettingsPassword() {
+    const el = $('#page-settings_password');
+    el.innerHTML = `<form id="settings-password-form">
+      <h3>改密碼</h3>
+      <p id="settings-password-error" class="form-error"></p>
+      <p id="settings-password-success" class="form-success"></p>
+      <label>目前密碼<input type="password" id="cur-password" autocomplete="current-password"></label>
+      <label>新密碼<input type="password" id="new-password" autocomplete="new-password"></label>
+      <label>確認新密碼<input type="password" id="confirm-password" autocomplete="new-password"></label>
+      <button type="submit">儲存</button>
+    </form>`;
+    $('#settings-password-form').addEventListener('submit', async e => {
+      e.preventDefault();
+      const oldPassword = $('#cur-password').value;
+      const newPassword = $('#new-password').value;
+      const confirmPassword = $('#confirm-password').value;
+      $('#settings-password-error').textContent = '';
+      $('#settings-password-success').textContent = '';
+      if (newPassword !== confirmPassword) {
+        $('#settings-password-error').textContent = '新密碼與確認新密碼不一致';
+        return;
+      }
+      try {
+        const body = JSON.stringify({ oldPassword, newPassword });
+        await api('/api/me/password', { method: 'POST', body });
+        $('#settings-password-success').textContent = '密碼已更新';
+        $('#cur-password').value = ''; $('#new-password').value = ''; $('#confirm-password').value = '';
+      } catch (err) {
+        $('#settings-password-error').textContent = err.message === '目前密碼不正確' ? '目前密碼不正確' : err.message;
+      }
+    });
   }
 
   // ── 啟動 ─────────────────────────────────────────

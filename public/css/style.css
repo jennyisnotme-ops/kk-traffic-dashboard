@@ -144,6 +144,46 @@ main { padding: 20px; }
 #add-report-btn { padding: 10px 20px; border: 1px dashed var(--c-dashed); border-radius: 12px;
   background: var(--c-card); cursor: pointer; font-size: 14px; color: var(--c-text-soft); }
 
+/* 帳號管理／設定頁：一般 HTML 表格＋表單，不套用 Cards.* 卡片機制 */
+#page-users table, #page-settings_password table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--c-card); border-radius: 12px; overflow: hidden; }
+#page-users th, #page-users td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--c-border-lighter); }
+#page-users th { color: var(--c-text-muted); font-weight: normal; background: var(--c-bg); }
+#page-users .badge { display: inline-block; padding: 2px 8px; margin: 1px 2px 1px 0; border-radius: 10px;
+  background: var(--c-primary-light); color: var(--c-primary); font-size: 12px; }
+#page-users .badge.disabled { background: var(--c-border-lighter); color: var(--c-text-muted); }
+#page-users .row-actions button { border: 1px solid var(--c-border); background: var(--c-card); cursor: pointer;
+  padding: 3px 10px; font-size: 12px; border-radius: 12px; margin-right: 4px; }
+#add-user-btn { padding: 10px 20px; border: 1px dashed var(--c-dashed); border-radius: 12px;
+  background: var(--c-card); cursor: pointer; font-size: 14px; color: var(--c-text-soft); margin-bottom: 12px; }
+
+#settings-password-form { background: var(--c-card); border-radius: 12px; padding: 20px; max-width: 360px;
+  display: flex; flex-direction: column; gap: 12px; }
+#settings-password-form input { padding: 8px; border: 1px solid var(--c-border); border-radius: 8px; }
+#settings-password-form button { padding: 8px 16px; border: 0; border-radius: 8px; background: var(--c-primary);
+  color: var(--c-on-primary); cursor: pointer; align-self: flex-start; }
+.form-error { color: var(--c-danger); font-size: 13px; min-height: 1em; }
+.form-success { color: var(--c-success); font-size: 13px; min-height: 1em; }
+
+/* 帳號新增/編輯彈窗、重設密碼彈窗：沿用 export/report modal 的 .modal-style pattern */
+#user-modal, #reset-pw-modal { position: fixed; inset: 0; background: var(--c-overlay);
+  display: flex; align-items: center; justify-content: center; z-index: 50; }
+#user-panel, #reset-pw-panel { background: var(--c-card); border-radius: 12px; padding: 20px; width: 380px;
+  max-height: 85vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
+#user-panel h3, #reset-pw-panel h3 { font-size: 15px; }
+#user-panel label { display: flex; flex-direction: column; gap: 4px; }
+#user-panel input[type="text"], #user-panel input[type="password"] {
+  padding: 8px; border: 1px solid var(--c-border); border-radius: 8px; }
+#user-role { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+#user-role label, #user-enabled-field { flex-direction: row !important; align-items: center; gap: 4px; }
+#user-pages { display: flex; flex-direction: column; gap: 4px; }
+#user-pages .page-check { display: flex; align-items: center; gap: 6px; }
+#user-actions, #reset-pw-actions { display: flex; justify-content: flex-end; gap: 8px; }
+#user-actions button, #reset-pw-actions button { padding: 6px 16px; border: 1px solid var(--c-border);
+  border-radius: 8px; background: var(--c-card); cursor: pointer; }
+#user-actions #user-save, #reset-pw-actions #reset-pw-save {
+  background: var(--c-primary); color: var(--c-on-primary); border-color: var(--c-primary); }
+#reset-pw-panel input { padding: 8px; border: 1px solid var(--c-border); border-radius: 8px; }
+
 /* hidden 屬性必須壓過任何 display 規則（修正彈窗一載入就顯示且關不掉） */
 [hidden] { display: none !important; }
 

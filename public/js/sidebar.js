@@ -39,6 +39,13 @@
     if (initialized) return;
     initialized = true;
 
+    // 通用群組定義：每個 .menu-group 底下的子頁鍵值集合（粉專、設定皆走同一套展開/收合邏輯，
+    // 之後若再新增群組只需在此追加一筆，不必再動 setActivePage/click 綁定邏輯）
+    const MENU_GROUPS = [
+      { id: '#menu-fb', subPages: ['fb_insights', 'fb_posts', 'fb_ads'] },
+      { id: '#menu-settings', subPages: ['settings_password', 'settings_theme'] },
+    ];
+
     function setActivePage(page) {
       document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
       const target = document.querySelector(`#page-${page}`);
@@ -48,12 +55,14 @@
         btn.classList.toggle('active', btn.dataset.page === page);
       });
 
-      // 若選到的是粉專子頁，父項也要顯示 active 狀態並展開群組
-      const isFbSub = page === 'fb_insights' || page === 'fb_posts' || page === 'fb_ads';
-      const fbGroup = document.querySelector('#menu-fb');
-      const fbParent = fbGroup && fbGroup.querySelector('.menu-parent');
-      if (fbParent) fbParent.classList.toggle('active', isFbSub);
-      if (isFbSub && fbGroup) fbGroup.classList.add('expanded');
+      // 若選到的是某群組的子頁，父項也要顯示 active 狀態並展開群組
+      for (const { id, subPages } of MENU_GROUPS) {
+        const isSub = subPages.includes(page);
+        const group = document.querySelector(id);
+        const parent = group && group.querySelector('.menu-parent');
+        if (parent) parent.classList.toggle('active', isSub);
+        if (isSub && group) group.classList.add('expanded');
+      }
     }
 
     function navigate(page) {
@@ -67,13 +76,15 @@
       btn.addEventListener('click', () => navigate(btn.dataset.page));
     });
 
-    // 粉專群組展開/收合
-    const fbGroup = document.querySelector('#menu-fb');
-    const fbParent = fbGroup && fbGroup.querySelector('.menu-parent');
-    if (fbParent) {
-      fbParent.addEventListener('click', () => {
-        fbGroup.classList.toggle('expanded');
-      });
+    // 各群組展開/收合（粉專、設定…）
+    for (const { id } of MENU_GROUPS) {
+      const group = document.querySelector(id);
+      const parent = group && group.querySelector('.menu-parent');
+      if (parent) {
+        parent.addEventListener('click', () => {
+          group.classList.toggle('expanded');
+        });
+      }
     }
 
     // ── 手機 RWD：<900px 收合為漢堡選單 overlay ──────────
