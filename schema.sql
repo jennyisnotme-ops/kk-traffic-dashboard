@@ -84,3 +84,20 @@ CREATE TABLE IF NOT EXISTS traf_reports (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- R3b-1: 帳號權限系統 — traf_users 擴充 + session 認證
+ALTER TABLE traf_users ADD COLUMN IF NOT EXISTS username TEXT UNIQUE;
+ALTER TABLE traf_users ADD COLUMN IF NOT EXISTS display_name TEXT;
+ALTER TABLE traf_users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';
+ALTER TABLE traf_users ADD COLUMN IF NOT EXISTS allowed_pages JSONB NOT NULL DEFAULT '["overview","ga","fb_insights","fb_posts","fb_ads","custom"]';
+ALTER TABLE traf_users ADD COLUMN IF NOT EXISTS prefs JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE traf_users ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT true;
+
+CREATE TABLE IF NOT EXISTS traf_sessions (
+  token      TEXT PRIMARY KEY,
+  user_id    INT NOT NULL REFERENCES traf_users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_traf_sessions_expires ON traf_sessions(expires_at);
