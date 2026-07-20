@@ -79,6 +79,21 @@ const { validateExportPayload, validateReportConfig } = require('./lib/validator
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+// /api/data 回應 key → 需要哪些頁面權限之一才能看到（聯集判斷，非單一頁面歸屬）。
+// overview 是彙總頁，會直接消費 ga_daily/fb_page_daily/ads_daily 三個原始 key
+// （見 public/js/app.js renderOverview()），故這三個 key 除了各自的細節頁，
+// 也要在使用者僅有 overview 權限時保留，否則前端 .map() 在 undefined 上會直接壞掉。
+const DATA_KEY_PAGES = {
+  ga_daily: ['overview', 'ga'],
+  ga_channels: ['ga'],
+  ga_pages: ['ga'],
+  ga_events: ['ga'],
+  fb_page_daily: ['overview', 'fb_insights'],
+  fb_posts: ['fb_posts'],
+  ads_daily: ['overview', 'fb_ads'],
+  // fetch_status：全站共用的抓取健康度 meta，不綁定任何單一頁面，一律保留
+};
+
 const loginLimiter = rateLimit({
   windowMs: 60 * 1000, max: 10,
   standardHeaders: true, legacyHeaders: false,
@@ -163,17 +178,11 @@ app.get('/api/data', requireAuth, async (req, res) => {
       fetch_status: fetchStatus.rows,
     };
     const allowed = req.user.allowed_pages || [];
-    // 依頁面權限過濾回應：無 ga 權限則不含 GA 相關 key，以此類推
-    // overview／fetch_status 為總覽彙整與抓取狀態，不受單一頁面權限限制
-    const PAGE_KEYS = {
-      ga: ['ga_daily', 'ga_channels', 'ga_pages', 'ga_events'],
-      fb_insights: ['fb_page_daily'],
-      fb_posts: ['fb_posts'],
-      fb_ads: ['ads_daily'],
-    };
-    for (const [page, keys] of Object.entries(PAGE_KEYS)) {
-      if (!allowed.includes(page)) {
-        for (const k of keys) delete full[k];
+    // 依頁面權限過濾回應：key 只要使用者擁有 DATA_KEY_PAGES 對照的任一頁面權限即保留
+    // （聯集判斷，例如 ga_daily 同時服務 overview 與 ga 兩個頁面）
+    for (const [key, pages] of Object.entries(DATA_KEY_PAGES)) {
+      if (!pages.some(p => allowed.includes(p))) {
+        delete full[key];
       }
     }
     res.json(full);
