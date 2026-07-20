@@ -170,6 +170,11 @@ app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
   if (!['admin', 'user'].includes(role)) return res.status(400).json({ error: 'role 不合法' });
   if (!Array.isArray(allowed_pages) || allowed_pages.some(k => !ALL_PAGES.includes(k)))
     return res.status(400).json({ error: 'allowed_pages 不合法' });
+  // 自我鎖定防護：production 僅有單一 admin 且無刪除/救援機制，
+  // 禁止管理員把自己降級或停用，避免誤觸永久鎖死所有管理功能
+  if (id === req.user.id && (role !== 'admin' || !enabled)) {
+    return res.status(400).json({ error: '不能停用或降級自己的帳號' });
+  }
   try {
     const { rows } = await pool.query(
       `UPDATE traf_users SET display_name=$1, role=$2, allowed_pages=$3, enabled=$4
@@ -191,6 +196,8 @@ app.post('/api/users/:id/reset-password', requireAuth, requireAdmin, async (req,
   const hash = await bcrypt.hash(newPassword, 10);
   const { rowCount } = await pool.query('UPDATE traf_users SET secret=$1 WHERE id=$2', [hash, id]);
   if (!rowCount) return res.status(404).json({ error: '帳號不存在' });
+  // 重設密碼後立即撤銷該使用者所有現有 session，避免被盜帳號的舊 token 仍可使用到 30 天滑動到期
+  await pool.query('DELETE FROM traf_sessions WHERE user_id = $1', [id]);
   res.json({ ok: true });
 });
 

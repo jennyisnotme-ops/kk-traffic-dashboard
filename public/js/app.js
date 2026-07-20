@@ -57,6 +57,13 @@
     return json;
   }
   function logout() {
+    const token = state.token;
+    if (token) {
+      // 用純 fetch（非 api() helper）：api() 在收到 401 時會呼叫 logout()，
+      // 若這裡改用 api() 會造成無窮遞迴
+      fetch('/api/logout', { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } })
+        .catch(() => {});
+    }
     localStorage.removeItem('traf_token');
     state.token = '';
     state.me = null;
