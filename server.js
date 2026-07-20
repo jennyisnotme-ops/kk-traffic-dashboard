@@ -28,14 +28,30 @@ async function initDB() {
   await pool.query(sql);
   console.log('資料庫初始化完成');
 
-  // 首次啟動：建立預設管理員
+  // R3b-1 一次性遷移：round-1/2 的共用密碼 admin 列尚未有 username，
+  // 補上帳號權限系統所需欄位（密碼 hash 不動，沿用原密碼）
+  const migrated = await pool.query(`
+    UPDATE traf_users SET
+      username = 'admin',
+      display_name = '管理員',
+      role = 'admin',
+      allowed_pages = '["overview","ga","fb_insights","fb_posts","fb_ads","custom"]'
+    WHERE username IS NULL
+  `);
+  if (migrated.rowCount > 0) {
+    console.log(`已遷移 ${migrated.rowCount} 筆既有帳號至新版 username/role 結構`);
+  }
+
+  // 首次啟動：建立預設管理員（僅在 traf_users 整表為空時觸發，遷移後不會是空）
   const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM traf_users');
   if (rows[0].n === 0) {
     const bcrypt = require('bcryptjs');
     const secret = process.env.INIT_ADMIN_SECRET;
     if (!secret) throw new Error('traf_users 為空且未設定 INIT_ADMIN_SECRET');
     const hash = await bcrypt.hash(secret, 10);
-    await pool.query('INSERT INTO traf_users (name, secret) VALUES ($1,$2)', ['admin', hash]);
+    await pool.query(
+      'INSERT INTO traf_users (name, username, display_name, role, secret) VALUES ($1,$2,$3,$4,$5)',
+      ['admin', 'admin', '管理員', 'admin', hash]);
     console.log('已建立預設管理員 admin');
   }
 }
@@ -55,7 +71,8 @@ app.get('/health', async (req, res) => {
   }
 });
 
-const { requireAuth, findUser } = require('./lib/auth');
+const { findUserByCreds, createSession, destroySession, getToken,
+  requireAuth, requireAdmin } = require('./lib/auth');
 const { runAll, scheduleDaily, backfill } = require('./jobs/daily');
 const XLSX = require('xlsx');
 const { validateExportPayload, validateReportConfig } = require('./lib/validators');
@@ -68,11 +85,39 @@ const loginLimiter = rateLimit({
   message: { error: '登入嘗試過於頻繁，請稍後再試' },
 });
 
-// 登入驗證：前端用來確認密碼正確，之後每個請求都帶同一個 Bearer secret
+// 登入改帳密（取代 round-1 的明文密碼比對）
 app.post('/api/login', loginLimiter, async (req, res) => {
-  const user = await findUser(String(req.body?.secret || ''));
-  if (!user) return res.status(401).json({ error: '密碼錯誤' });
-  res.json({ ok: true, name: user.name });
+  const { username, password } = req.body || {};
+  const user = await findUserByCreds(String(username || ''), String(password || ''));
+  if (!user) return res.status(401).json({ error: '帳號或密碼錯誤' });
+  const token = await createSession(user.id);
+  res.json({ ok: true, token, username: user.username, display_name: user.display_name,
+    role: user.role, allowed_pages: user.allowed_pages, prefs: user.prefs });
+});
+
+// 用 token 驗證目前登入狀態（前端啟動時呼叫，取代 round-1 對 /api/login 重放密碼）
+app.get('/api/me', requireAuth, (req, res) => {
+  const u = req.user;
+  res.json({ username: u.username, display_name: u.display_name, role: u.role,
+    allowed_pages: u.allowed_pages, prefs: u.prefs });
+});
+
+app.post('/api/logout', requireAuth, async (req, res) => {
+  await destroySession(getToken(req));
+  res.json({ ok: true });
+});
+
+// 使用者自助改密碼
+app.post('/api/me/password', requireAuth, async (req, res) => {
+  const { oldPassword, newPassword } = req.body || {};
+  if (typeof newPassword !== 'string' || newPassword.length < 6)
+    return res.status(400).json({ error: '新密碼至少 6 字元' });
+  const bcrypt = require('bcryptjs');
+  const ok = await bcrypt.compare(String(oldPassword || ''), req.user.secret);
+  if (!ok) return res.status(401).json({ error: '目前密碼不正確' });
+  const hash = await bcrypt.hash(newPassword, 10);
+  await pool.query('UPDATE traf_users SET secret = $1 WHERE id = $2', [hash, req.user.id]);
+  res.json({ ok: true });
 });
 
 // 儀表板資料：一次回傳指定區間的全部數據
@@ -107,7 +152,7 @@ app.get('/api/data', requireAuth, async (req, res) => {
           `SELECT DISTINCT ON (source) source, fetched_at, status, error
              FROM traf_fetch_log ORDER BY source, id DESC`),
       ]);
-    res.json({
+    const full = {
       ga_daily: gaDaily.rows,
       ga_channels: gaChannels.rows,
       ga_pages: gaPages.rows,
@@ -116,7 +161,22 @@ app.get('/api/data', requireAuth, async (req, res) => {
       fb_posts: fbPosts.rows,
       ads_daily: adsDaily.rows,
       fetch_status: fetchStatus.rows,
-    });
+    };
+    const allowed = req.user.allowed_pages || [];
+    // 依頁面權限過濾回應：無 ga 權限則不含 GA 相關 key，以此類推
+    // overview／fetch_status 為總覽彙整與抓取狀態，不受單一頁面權限限制
+    const PAGE_KEYS = {
+      ga: ['ga_daily', 'ga_channels', 'ga_pages', 'ga_events'],
+      fb_insights: ['fb_page_daily'],
+      fb_posts: ['fb_posts'],
+      fb_ads: ['ads_daily'],
+    };
+    for (const [page, keys] of Object.entries(PAGE_KEYS)) {
+      if (!allowed.includes(page)) {
+        for (const k of keys) delete full[k];
+      }
+    }
+    res.json(full);
   } catch (err) {
     console.error('[api/data]', err);
     res.status(500).json({ error: '伺服器錯誤' });
@@ -147,13 +207,16 @@ function validReportName(name) {
 }
 
 app.get('/api/reports', requireAuth, async (req, res) => {
+  if (!(req.user.allowed_pages || []).includes('custom')) {
+    return res.status(403).json({ error: '無此頁面權限' });
+  }
   try {
     const { rows } = await pool.query('SELECT * FROM traf_reports ORDER BY id');
     res.json({ reports: rows });
   } catch (err) { console.error('[api/reports]', err); res.status(500).json({ error: '伺服器錯誤' }); }
 });
 
-app.post('/api/reports', requireAuth, async (req, res) => {
+app.post('/api/reports', requireAuth, requireAdmin, async (req, res) => {
   const { name, config } = req.body || {};
   if (!validReportName(name)) return res.status(400).json({ error: '名稱需為 1–50 字' });
   const v = validateReportConfig(config);
@@ -166,7 +229,7 @@ app.post('/api/reports', requireAuth, async (req, res) => {
   } catch (err) { console.error('[api/reports]', err); res.status(500).json({ error: '伺服器錯誤' }); }
 });
 
-app.put('/api/reports/:id', requireAuth, async (req, res) => {
+app.put('/api/reports/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'id 不合法' });
   const { name, config } = req.body || {};
@@ -182,7 +245,7 @@ app.put('/api/reports/:id', requireAuth, async (req, res) => {
   } catch (err) { console.error('[api/reports]', err); res.status(500).json({ error: '伺服器錯誤' }); }
 });
 
-app.delete('/api/reports/:id', requireAuth, async (req, res) => {
+app.delete('/api/reports/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'id 不合法' });
   try {
@@ -193,7 +256,7 @@ app.delete('/api/reports/:id', requireAuth, async (req, res) => {
 
 // 手動重抓（無 body 時各源用自己的預設窗；可帶 {from, to} 指定區間）
 // Express 4 不會自動處理 async handler 的 rejection，須自行 try/catch
-app.post('/api/refetch', requireAuth, async (req, res) => {
+app.post('/api/refetch', requireAuth, requireAdmin, async (req, res) => {
   try {
     if (req.body?.from && req.body?.to) {
       if (!DATE_RE.test(req.body.from) || !DATE_RE.test(req.body.to)) {
@@ -212,7 +275,7 @@ app.post('/api/refetch', requireAuth, async (req, res) => {
 });
 
 // 一次性歷史回補（上線時執行一次；重複執行只是重複 UPSERT，無害但耗時）
-app.post('/api/backfill', requireAuth, async (req, res) => {
+app.post('/api/backfill', requireAuth, requireAdmin, async (req, res) => {
   try {
     res.json(await backfill(pool));
   } catch (err) {
