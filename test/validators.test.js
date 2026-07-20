@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { validateExportPayload, validateReportConfig } = require('../lib/validators');
+const { validateExportPayload, validateReportConfig, validateNewUser } = require('../lib/validators');
 
 test('validateExportPayload 接受合法 payload', () => {
   assert.deepEqual(
@@ -36,4 +36,43 @@ test('validateReportConfig 拒絕非法值', () => {
   assert.equal(validateReportConfig({ type: 'line', metrics: [{ source: 'ga_daily', field: 'nope' }] }).ok, false);
   assert.equal(validateReportConfig({ type: 'line', metrics: [{ source: 'ga_channels', field: 'sessions' }] }).ok, false); // 缺 channel
   assert.equal(validateReportConfig({ type: 'line', metrics: [{ source: 'ga_daily', field: 'users', label: 'x'.repeat(51) }] }).ok, false);
+});
+
+test('validateNewUser 接受合法 payload', () => {
+  assert.deepEqual(validateNewUser({
+    username: 'test_user1', password: 'secret6', display_name: '測試員',
+    role: 'user', allowed_pages: ['overview', 'ga'],
+  }), { ok: true });
+});
+
+test('validateNewUser 拒絕 username 格式錯', () => {
+  assert.equal(validateNewUser({
+    username: 'ab', password: 'secret6', display_name: '測試員',
+    role: 'user', allowed_pages: ['overview'],
+  }).ok, false);
+  assert.equal(validateNewUser({
+    username: '不合法帳號', password: 'secret6', display_name: '測試員',
+    role: 'user', allowed_pages: ['overview'],
+  }).ok, false);
+});
+
+test('validateNewUser 拒絕密碼過短', () => {
+  assert.equal(validateNewUser({
+    username: 'test_user1', password: '123', display_name: '測試員',
+    role: 'user', allowed_pages: ['overview'],
+  }).ok, false);
+});
+
+test('validateNewUser 拒絕 role 不合法', () => {
+  assert.equal(validateNewUser({
+    username: 'test_user1', password: 'secret6', display_name: '測試員',
+    role: 'superadmin', allowed_pages: ['overview'],
+  }).ok, false);
+});
+
+test('validateNewUser 拒絕 allowed_pages 含非法鍵', () => {
+  assert.equal(validateNewUser({
+    username: 'test_user1', password: 'secret6', display_name: '測試員',
+    role: 'user', allowed_pages: ['overview', 'not_a_page'],
+  }).ok, false);
 });

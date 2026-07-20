@@ -75,7 +75,7 @@ const { findUserByCreds, createSession, destroySession, getToken,
   requireAuth, requireAdmin } = require('./lib/auth');
 const { runAll, scheduleDaily, backfill } = require('./jobs/daily');
 const XLSX = require('xlsx');
-const { validateExportPayload, validateReportConfig } = require('./lib/validators');
+const { validateExportPayload, validateReportConfig, validateNewUser, ALL_PAGES } = require('./lib/validators');
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -132,6 +132,65 @@ app.post('/api/me/password', requireAuth, async (req, res) => {
   if (!ok) return res.status(401).json({ error: '目前密碼不正確' });
   const hash = await bcrypt.hash(newPassword, 10);
   await pool.query('UPDATE traf_users SET secret = $1 WHERE id = $2', [hash, req.user.id]);
+  res.json({ ok: true });
+});
+
+// 帳號管理（僅限 admin）
+app.get('/api/users', requireAuth, requireAdmin, async (req, res) => {
+  const { rows } = await pool.query(
+    'SELECT id, username, display_name, role, allowed_pages, enabled FROM traf_users ORDER BY id');
+  res.json({ users: rows });
+});
+
+app.post('/api/users', requireAuth, requireAdmin, async (req, res) => {
+  const v = validateNewUser(req.body);
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  const bcrypt = require('bcryptjs');
+  try {
+    const hash = await bcrypt.hash(req.body.password, 10);
+    const { rows } = await pool.query(
+      `INSERT INTO traf_users (username, secret, display_name, role, allowed_pages, name)
+       VALUES ($1,$2,$3,$4,$5,$3) RETURNING id, username, display_name, role, allowed_pages, enabled`,
+      [req.body.username, hash, req.body.display_name, req.body.role,
+       JSON.stringify(req.body.allowed_pages)]);
+    res.json({ user: rows[0] });
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: '帳號已存在' });
+    console.error('[api/users]', err); res.status(500).json({ error: '伺服器錯誤' });
+  }
+});
+
+// 更新角色/權限/顯示名/啟用狀態（不含密碼）
+app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'id 不合法' });
+  const { display_name, role, allowed_pages, enabled } = req.body || {};
+  if (typeof display_name !== 'string' || !display_name.trim() || display_name.length > 50)
+    return res.status(400).json({ error: 'display_name 不合法' });
+  if (!['admin', 'user'].includes(role)) return res.status(400).json({ error: 'role 不合法' });
+  if (!Array.isArray(allowed_pages) || allowed_pages.some(k => !ALL_PAGES.includes(k)))
+    return res.status(400).json({ error: 'allowed_pages 不合法' });
+  try {
+    const { rows } = await pool.query(
+      `UPDATE traf_users SET display_name=$1, role=$2, allowed_pages=$3, enabled=$4
+        WHERE id=$5 RETURNING id, username, display_name, role, allowed_pages, enabled`,
+      [display_name, role, JSON.stringify(allowed_pages), Boolean(enabled), id]);
+    if (!rows[0]) return res.status(404).json({ error: '帳號不存在' });
+    res.json({ user: rows[0] });
+  } catch (err) { console.error('[api/users]', err); res.status(500).json({ error: '伺服器錯誤' }); }
+});
+
+// 管理員重設他人密碼
+app.post('/api/users/:id/reset-password', requireAuth, requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  const { newPassword } = req.body || {};
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'id 不合法' });
+  if (typeof newPassword !== 'string' || newPassword.length < 6)
+    return res.status(400).json({ error: '新密碼至少 6 字元' });
+  const bcrypt = require('bcryptjs');
+  const hash = await bcrypt.hash(newPassword, 10);
+  const { rowCount } = await pool.query('UPDATE traf_users SET secret=$1 WHERE id=$2', [hash, id]);
+  if (!rowCount) return res.status(404).json({ error: '帳號不存在' });
   res.json({ ok: true });
 });
 
