@@ -1,7 +1,7 @@
 // app.js — 登入、日期區間、載入 /api/data、渲染六個頁面（左側選單切換見 sidebar.js）
 (function () {
   const $ = s => document.querySelector(s);
-  const state = { secret: localStorage.getItem('traf_secret') || '',
+  const state = { token: localStorage.getItem('traf_token') || '', me: null,
     from: '', to: '', compareOn: false, compareMode: 'prev', cmpFrom: '', cmpTo: '',
     data: null, cmpData: null, reports: [] };
 
@@ -49,7 +49,7 @@
     const res = await fetch(path, {
       ...opts,
       headers: { 'Content-Type': 'application/json',
-                 'Authorization': `Bearer ${state.secret}`, ...(opts.headers || {}) },
+                 'Authorization': `Bearer ${state.token}`, ...(opts.headers || {}) },
     });
     if (res.status === 401) { logout(); throw new Error('未登入'); }
     const json = await res.json();
@@ -57,8 +57,9 @@
     return json;
   }
   function logout() {
-    localStorage.removeItem('traf_secret');
-    state.secret = '';
+    localStorage.removeItem('traf_token');
+    state.token = '';
+    state.me = null;
     $('#main').hidden = true;
     $('#login-overlay').style.display = 'flex';
   }
@@ -66,41 +67,53 @@
   // ── 登入 ─────────────────────────────────────────
   $('#login-form').addEventListener('submit', async e => {
     e.preventDefault();
-    const secret = $('#login-secret').value;
+    const username = $('#login-username').value;
+    const password = $('#login-password').value;
     try {
       const res = await fetch('/api/login', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ secret }),
+        body: JSON.stringify({ username, password }),
       });
-      if (!res.ok) throw new Error((await res.json()).error || '登入失敗');
-      state.secret = secret;
-      localStorage.setItem('traf_secret', secret);
-      enter();
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || '登入失敗');
+      state.token = json.token;
+      localStorage.setItem('traf_token', json.token);
+      const me = await api('/api/me');
+      await enter(me);
     } catch (err) { $('#login-error').textContent = err.message; }
   });
   $('#logout-btn').addEventListener('click', logout);
 
-  async function enter() {
+  async function enter(me) {
+    state.me = me;
     $('#login-overlay').style.display = 'none';
     $('#main').hidden = false;
     Cards.configureExport({
       post: async payload => {
         const res = await fetch('/api/export', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.secret}` },
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` },
           body: JSON.stringify(payload),
         });
         if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || '匯出失敗');
         return res.blob();
       },
     });
+    applyRoleUI();
+    const allowed = new Set(state.me.allowed_pages || []);
+    Sidebar.init({ pages: PAGES.filter(p => allowed.has(p)), onNavigate: () => {} });
     try { await loadReports(); } catch (_) { state.reports = []; }
     load();
   }
 
+  // 依角色隱藏體驗優化用的按鈕/操作（非安全邊界，後端已各自 403）
+  function applyRoleUI() {
+    const isUser = state.me?.role === 'user';
+    $('#refetch-btn').hidden = isUser;
+  }
+
   // ── 左側選單與日期列 ─────────────────────────────
   const PAGES = ['overview', 'ga', 'fb_insights', 'fb_posts', 'fb_ads', 'custom'];
-  Sidebar.init({ pages: PAGES, onNavigate: () => {} });   // 導覽只切 .page.active，資料已預先渲染
 
   $('#date-preset').addEventListener('change', () => {
     const v = $('#date-preset').value;
@@ -184,6 +197,19 @@
     initSortable($('#page-custom'), 'custom');
   }
 
+  // ── 無權限空狀態 ─────────────────────────────────
+  // /api/data 依 allowed_pages 過濾回應 key（見 server.js DATA_KEY_PAGES），使用者若無權限，
+  // 對應 key 會直接缺席（undefined）。渲染前逐頁檢查所需 key 是否齊全，
+  // 缺席時顯示「無權限查看此頁」文字卡而非讓 .map() 撞 undefined 壞掉。
+  function renderNoPermission(el) {
+    el.innerHTML = '';
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.textContent = '無權限查看此頁';
+    el.appendChild(card);
+  }
+  function hasKeys(...keys) { return keys.every(k => state.data[k] !== undefined); }
+
   const num = v => Number(v || 0).toLocaleString('zh-TW');
   const money = v => 'NT$' + Number(v || 0).toLocaleString('zh-TW', { maximumFractionDigits: 0 });
   // API 回傳的 pg DATE 欄位會被序列化為 UTC 位移的 ISO 字串
@@ -214,6 +240,7 @@
 
   function renderOverview() {
     const el = $('#page-overview');
+    if (!hasKeys('ga_daily', 'fb_page_daily', 'ads_daily')) return renderNoPermission(el);
     el.innerHTML = '';
     const d = state.data;
     Cards.kpiCard({ el, label: 'GA 使用者（區間加總）', value: num(sum(d.ga_daily, 'users')),
@@ -288,6 +315,7 @@
 
   function renderGa() {
     const el = $('#page-ga');
+    if (!hasKeys('ga_daily', 'ga_channels', 'ga_pages', 'ga_events')) return renderNoPermission(el);
     el.innerHTML = '';
     const d = state.data;
     Cards.chartCard({
@@ -385,6 +413,7 @@
 
   function renderFbInsights() {
     const el = $('#page-fb_insights');
+    if (!hasKeys('fb_page_daily')) return renderNoPermission(el);
     el.innerHTML = '';
     const d = state.data;
     Cards.chartCard({
@@ -435,6 +464,7 @@
 
   function renderFbPosts() {
     const el = $('#page-fb_posts');
+    if (!hasKeys('fb_posts')) return renderNoPermission(el);
     el.innerHTML = '';
     const postRows = state.data.fb_posts.map(p => ({
       ...p, created_at: taipeiDate(p.created_at),
@@ -464,6 +494,7 @@
 
   function renderAds() {
     const el = $('#page-fb_ads');
+    if (!hasKeys('ads_daily')) return renderNoPermission(el);
     el.innerHTML = '';
     const d = state.data;
     const byDate = groupSum(d.ads_daily, 'date', 'spend');
@@ -603,7 +634,12 @@
 
   function renderCustom() {
     const el = $('#page-custom');
+    // custom 報表資料不經 /api/data（見 hasKeys 用法），改直接檢查 allowed_pages：
+    // /api/reports 對無權限使用者回 403，loadReports() 已在 catch 裡把 state.reports 清空，
+    // 但空陣列本身無法區分「沒有報表」與「沒權限」，需要看 allowed_pages 才準確
+    if (!(state.me?.allowed_pages || []).includes('custom')) return renderNoPermission(el);
     el.innerHTML = '';
+    const isAdmin = state.me?.role === 'admin';
     const axis = dateAxis(state.from, state.to);
     for (const rep of state.reports) {
       const series = rep.config.metrics.map(m => metricSeries(state.data, m, axis));
@@ -625,21 +661,23 @@
           rows: axis.map((d, ri) => Object.fromEntries(
             [['date', d], ...series.map((s, i) => [`m${i}`, s.data[ri]])])),
         },
-        actions: [
+        actions: isAdmin ? [
           { label: '編輯', onClick: () => openReportModal(rep) },
           { label: '刪除', onClick: async () => {
               if (!confirm(`刪除報表「${rep.name}」？（全部門共用，刪除影響所有人）`)) return;
               await api(`/api/reports/${rep.id}`, { method: 'DELETE' });
               await loadReports(); renderCustom();
             } },
-        ],
+        ] : [],
       });
     }
-    const add = document.createElement('button');
-    add.id = 'add-report-btn';
-    add.textContent = '＋ 新增報表';
-    add.onclick = () => openReportModal(null);
-    el.appendChild(add);
+    if (isAdmin) {
+      const add = document.createElement('button');
+      add.id = 'add-report-btn';
+      add.textContent = '＋ 新增報表';
+      add.onclick = () => openReportModal(null);
+      el.appendChild(add);
+    }
   }
 
   // ── 報表精靈 ─────────────────────────────────────
@@ -733,10 +771,9 @@
 
   // ── 啟動 ─────────────────────────────────────────
   setRange('30');
-  if (state.secret) {
-    fetch('/api/login', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ secret: state.secret }),
-    }).then(r => (r.ok ? enter() : logout()));
+  if (state.token) {
+    // 啟動時用既有 token 呼叫 GET /api/me 驗證＋還原登入狀態，不重放帳密；
+    // api() 內建 401 → logout()，這裡只需吞掉例外避免 unhandled rejection
+    api('/api/me').then(me => enter(me)).catch(() => {});
   }
 })();

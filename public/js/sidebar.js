@@ -15,6 +15,17 @@
 
     const pageSet = new Set(pages || []);
 
+    // 依 pages（呼叫端已依 allowed_pages 過濾好的清單）隱藏無權限項目；
+    // 粉專群組若三個子頁都被過濾掉，連父項一併隱藏
+    menu.querySelectorAll('.menu-item[data-page]').forEach(btn => {
+      btn.hidden = !pageSet.has(btn.dataset.page);
+    });
+    const fbGroupEl = document.querySelector('#menu-fb');
+    if (fbGroupEl) {
+      const anyFbVisible = ['fb_insights', 'fb_posts', 'fb_ads'].some(p => pageSet.has(p));
+      fbGroupEl.hidden = !anyFbVisible;
+    }
+
     function setActivePage(page) {
       document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
       const target = document.querySelector(`#page-${page}`);

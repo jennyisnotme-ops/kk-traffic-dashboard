@@ -22,6 +22,7 @@ const PORT = 3777;
 const BASE_URL = `http://localhost:${PORT}`;
 const PROJECT_ROOT = path.join(__dirname, '..');
 const HEALTH_TIMEOUT_MS = 30000;
+const ADMIN_USERNAME = 'admin';
 const ADMIN_SECRET = process.env.INIT_ADMIN_SECRET;
 
 const failures = [];
@@ -202,7 +203,8 @@ async function main() {
 
     // c. 錯誤密碼
     await check('錯誤密碼 → #login-error 顯示訊息、#main 仍隱藏', async () => {
-      await page.type('#login-secret', 'this-is-definitely-wrong-password');
+      await page.type('#login-username', ADMIN_USERNAME);
+      await page.type('#login-password', 'this-is-definitely-wrong-password');
       await page.click('#login-form button[type="submit"]');
       await page.waitForFunction(
         () => document.querySelector('#login-error')?.textContent?.trim().length > 0,
@@ -213,12 +215,12 @@ async function main() {
       const mainDisplay = await computedDisplay(page, '#main');
       if (mainDisplay !== 'none') throw new Error(`#main 應仍為 display:none，實際為 ${mainDisplay}`);
       // 清空輸入框，準備下一步輸入正確密碼
-      await page.evaluate(() => { document.querySelector('#login-secret').value = ''; });
+      await page.evaluate(() => { document.querySelector('#login-password').value = ''; });
     });
 
     // d. 正確密碼
     await check('正確密碼 → #main 顯示、登入層消失', async () => {
-      await page.type('#login-secret', ADMIN_SECRET);
+      await page.type('#login-password', ADMIN_SECRET);
       await page.click('#login-form button[type="submit"]');
       await page.waitForFunction(() => {
         const main = document.querySelector('#main');
@@ -387,9 +389,10 @@ async function main() {
         return btn && btn.classList.contains('active');
       }, { timeout: 5000 });
 
-      // 重新載入頁面：先前登入成功時 app.js 會把密碼存進 localStorage（traf_secret），
-      // reload 後啟動流程會自動用它重新登入（見 app.js 檔尾），不一定會停在登入表單，
-      // 所以要同時等「自動登入完成」或「登入表單仍在」兩種情況，再視情況手動登入。
+      // 重新載入頁面：先前登入成功時 app.js 會把 token 存進 localStorage（traf_token），
+      // reload 後啟動流程會呼叫 GET /api/me 驗證並自動還原登入狀態（見 app.js 檔尾），
+      // 不一定會停在登入表單，所以要同時等「自動登入完成」或「登入表單仍在」兩種情況，
+      // 再視情況手動登入。
       await page.goto(BASE_URL, { waitUntil: 'networkidle0' });
       await page.waitForFunction(() => {
         const main = document.querySelector('#main');
@@ -402,8 +405,9 @@ async function main() {
         return Boolean(main && getComputedStyle(main).display !== 'none');
       });
       if (!alreadyIn) {
-        await page.waitForSelector('#login-secret', { timeout: 5000 });
-        await page.type('#login-secret', ADMIN_SECRET);
+        await page.waitForSelector('#login-username', { timeout: 5000 });
+        await page.type('#login-username', ADMIN_USERNAME);
+        await page.type('#login-password', ADMIN_SECRET);
         await page.click('#login-form button[type="submit"]');
       }
       await page.waitForFunction(() => {
