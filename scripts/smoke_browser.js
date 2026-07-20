@@ -426,6 +426,57 @@ async function main() {
       if (!stillActive) throw new Error('重新載入並登入後，「長條」按鈕未保持 active（localStorage 記憶失效）');
     });
 
+    // j1b. 同分頁內登出再登入（不 reload）：Sidebar.init 監聽器不得重複綁定
+    // 回歸測試：#logout-btn 不會整頁重載，app.js 的 enter() 每次登入成功都會呼叫
+    // Sidebar.init；若 sidebar.js 每次都重新 addEventListener，同分頁內第二次登入後
+    // 粉專群組展開/收合這類 classList.toggle() 邏輯會被觸發兩次而互相抵銷，看起來像失靈。
+    await check('同分頁登出再登入：粉專群組展開/收合仍正常（監聽器未重複綁定）', async () => {
+      await page.click('#logout-btn');
+      await page.waitForFunction(() => {
+        const login = document.querySelector('#login-overlay');
+        return login && getComputedStyle(login).display !== 'none';
+      }, { timeout: 5000 });
+      const mainHiddenAfterLogout = await computedDisplay(page, '#main');
+      if (mainHiddenAfterLogout !== 'none') throw new Error(`登出後 #main 應為 display:none，實際為 ${mainHiddenAfterLogout}`);
+
+      await page.waitForSelector('#login-username', { timeout: 5000 });
+      await page.evaluate(() => {
+        document.querySelector('#login-username').value = '';
+        document.querySelector('#login-password').value = '';
+      });
+      await page.type('#login-username', ADMIN_USERNAME);
+      await page.type('#login-password', ADMIN_SECRET);
+      await page.click('#login-form button[type="submit"]');
+      await page.waitForFunction(() => {
+        const main = document.querySelector('#main');
+        return main && getComputedStyle(main).display !== 'none';
+      }, { timeout: 10000 });
+      await page.waitForFunction(
+        () => document.querySelectorAll('#page-overview .card').length >= 4,
+        { timeout: 10000 },
+      );
+
+      // 粉專群組此時應為預設收合狀態（沒有 reload，但 setActivePage 只在點選單項時展開，
+      // 重新登入本身不會展開它）
+      const subVisibleBefore = await isComputedVisible(page, '#menu-fb .menu-sub');
+      if (subVisibleBefore) throw new Error('重新登入後 .menu-sub 應仍為收合狀態');
+
+      // 點父項展開：若監聽器被重複綁定 N 次，toggle 會被連續呼叫 N 次，
+      // 偶數次會讓畫面停在「看起來沒展開」
+      await page.click('.menu-parent[data-group="fb"]');
+      await page.waitForFunction(
+        () => getComputedStyle(document.querySelector('#menu-fb .menu-sub')).display !== 'none',
+        { timeout: 5000 },
+      );
+
+      // 再點一次應收合
+      await page.click('.menu-parent[data-group="fb"]');
+      await page.waitForFunction(
+        () => getComputedStyle(document.querySelector('#menu-fb .menu-sub')).display === 'none',
+        { timeout: 5000 },
+      );
+    });
+
     // j2. RWD：手機視窗（375×800）漢堡選單存在且可展開/收合
     await check('RWD：375px 視窗漢堡選單可展開/收合', async () => {
       await page.setViewport({ width: 375, height: 800 });

@@ -5,6 +5,14 @@
 //                      不負責渲染資料，實際渲染邏輯留給呼叫端）
 (function () {
   const MOBILE_BREAKPOINT = 900;
+  // app.js 的 enter() 在每次成功登入後都會呼叫 Sidebar.init（同一個 user 重新整理
+  // allowed_pages、或換帳號登入時刷新選單顯示範圍），但 #logout-btn 不會重新整理頁面，
+  // 同一分頁內可反覆「登出→登入」而不換頁。若每次 init() 都重新 addEventListener，
+  // 舊的監聽器不會被清掉，N 次登入後每個 click 會觸發 N 次，尤其是 classList.toggle()
+  // 這類「翻轉」邏輯（粉專群組展開/收合、手機漢堡選單開關）會被連續呼叫偶數/奇數次
+  // 而看似「隨機失靈」。用模組層級旗標讓監聽器只在同一次頁面載入中真正綁定一次；
+  // 之後的 init() 呼叫只重跑 pages 驅動的顯示/隱藏邏輯。
+  let initialized = false;
 
   function init({ pages, onNavigate } = {}) {
     const sidebar = document.querySelector('#sidebar');
@@ -17,6 +25,7 @@
 
     // 依 pages（呼叫端已依 allowed_pages 過濾好的清單）隱藏無權限項目；
     // 粉專群組若三個子頁都被過濾掉，連父項一併隱藏
+    // ── 這段每次 init() 呼叫都要重跑（換帳號登入時 allowed_pages 可能不同）──
     menu.querySelectorAll('.menu-item[data-page]').forEach(btn => {
       btn.hidden = !pageSet.has(btn.dataset.page);
     });
@@ -25,6 +34,10 @@
       const anyFbVisible = ['fb_insights', 'fb_posts', 'fb_ads'].some(p => pageSet.has(p));
       fbGroupEl.hidden = !anyFbVisible;
     }
+
+    // ── 監聽器只在第一次真正綁定，之後的 init() 呼叫到此為止 ──────────
+    if (initialized) return;
+    initialized = true;
 
     function setActivePage(page) {
       document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
