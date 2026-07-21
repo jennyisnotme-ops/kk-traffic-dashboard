@@ -75,7 +75,7 @@ const { findUserByCreds, createSession, destroySession, getToken,
   requireAuth, requireAdmin } = require('./lib/auth');
 const { runAll, scheduleDaily, backfill } = require('./jobs/daily');
 const XLSX = require('xlsx');
-const { validateExportPayload, validateReportConfig, validateNewUser, ALL_PAGES } = require('./lib/validators');
+const { validateExportPayload, validateReportConfig, validateNewUser, validateLayoutCards, ALL_PAGES } = require('./lib/validators');
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -327,6 +327,48 @@ app.delete('/api/reports/:id', requireAuth, requireAdmin, async (req, res) => {
     await pool.query('DELETE FROM traf_reports WHERE id=$1', [id]);
     res.json({ ok: true });
   } catch (err) { console.error('[api/reports]', err); res.status(500).json({ error: '伺服器錯誤' }); }
+});
+
+// 版面自訂：scope='default'（全站預設，僅 admin 可寫）或 'mine'（個人版面，任何登入者可寫自己的）。
+// 伺服器一律自行決定實際寫入的 scope 值，絕不信任前端傳入的使用者 id，避免竄改他人版面。
+app.get('/api/layout', requireAuth, async (req, res) => {
+  const { scope } = req.query;
+  if (scope !== 'default' && scope !== 'mine') {
+    return res.status(400).json({ error: 'scope 需為 default 或 mine' });
+  }
+  const dbScope = scope === 'default' ? 'default' : String(req.user.id);
+  try {
+    const { rows } = await pool.query('SELECT cards FROM traf_layouts WHERE scope = $1', [dbScope]);
+    res.json({ cards: rows[0] ? rows[0].cards : null });
+  } catch (err) { console.error('[api/layout]', err); res.status(500).json({ error: '伺服器錯誤' }); }
+});
+
+app.put('/api/layout', requireAuth, async (req, res) => {
+  const { scope, cards } = req.body || {};
+  if (scope !== 'default' && scope !== 'mine') {
+    return res.status(400).json({ error: 'scope 需為 default 或 mine' });
+  }
+  if (scope === 'default' && req.user.role !== 'admin') {
+    return res.status(403).json({ error: '需要管理員權限' });
+  }
+  const v = validateLayoutCards(cards);
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  const dbScope = scope === 'default' ? 'default' : String(req.user.id);
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO traf_layouts (scope, cards) VALUES ($1, $2)
+       ON CONFLICT (scope) DO UPDATE SET cards = $2, updated_at = now()
+       RETURNING cards`,
+      [dbScope, JSON.stringify(cards)]);
+    res.json({ cards: rows[0].cards });
+  } catch (err) { console.error('[api/layout]', err); res.status(500).json({ error: '伺服器錯誤' }); }
+});
+
+app.delete('/api/layout/mine', requireAuth, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM traf_layouts WHERE scope = $1', [String(req.user.id)]);
+    res.json({ ok: true });
+  } catch (err) { console.error('[api/layout]', err); res.status(500).json({ error: '伺服器錯誤' }); }
 });
 
 // 手動重抓（無 body 時各源用自己的預設窗；可帶 {from, to} 指定區間）

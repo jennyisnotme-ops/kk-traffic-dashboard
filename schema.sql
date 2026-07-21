@@ -101,3 +101,12 @@ CREATE TABLE IF NOT EXISTS traf_sessions (
   expires_at TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_traf_sessions_expires ON traf_sessions(expires_at);
+
+-- R3c-1: 版面自訂（'default' 全域預設版面 或 使用者 id 的字串形式 = 該使用者個人版面）
+CREATE TABLE IF NOT EXISTS traf_layouts (
+  id         SERIAL PRIMARY KEY,
+  scope      TEXT NOT NULL,   -- 'default' 或 使用者 id 的字串形式
+  cards      JSONB NOT NULL,  -- [{cid, type?}] 陣列，cid 對應既有卡片 id/自訂報表 custom_<id>
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (scope)
+);

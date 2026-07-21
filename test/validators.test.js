@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { validateExportPayload, validateReportConfig, validateNewUser } = require('../lib/validators');
+const { validateExportPayload, validateReportConfig, validateNewUser, validateLayoutCards } = require('../lib/validators');
 
 test('validateExportPayload 接受合法 payload', () => {
   assert.deepEqual(
@@ -75,4 +75,33 @@ test('validateNewUser 拒絕 allowed_pages 含非法鍵', () => {
     username: 'test_user1', password: 'secret6', display_name: '測試員',
     role: 'user', allowed_pages: ['overview', 'not_a_page'],
   }).ok, false);
+});
+
+test('validateLayoutCards 接受合法卡片陣列', () => {
+  assert.deepEqual(validateLayoutCards([
+    { cid: 'ga_daily_users' },
+    { cid: 'custom_1', type: 'bar' },
+  ]), { ok: true });
+});
+
+test('validateLayoutCards 拒絕空陣列', () => {
+  assert.equal(validateLayoutCards([]).ok, false);
+});
+
+test('validateLayoutCards 拒絕超過 20 項', () => {
+  const cards = Array.from({ length: 21 }, (_, i) => ({ cid: `c${i}` }));
+  assert.equal(validateLayoutCards(cards).ok, false);
+});
+
+test('validateLayoutCards 拒絕 cid 過長', () => {
+  assert.equal(validateLayoutCards([{ cid: 'x'.repeat(61) }]).ok, false);
+});
+
+test('validateLayoutCards 拒絕不合法的 type', () => {
+  assert.equal(validateLayoutCards([{ cid: 'a', type: 'radar' }]).ok, false);
+});
+
+test('validateLayoutCards 拒絕非陣列', () => {
+  assert.equal(validateLayoutCards(null).ok, false);
+  assert.equal(validateLayoutCards({}).ok, false);
 });
