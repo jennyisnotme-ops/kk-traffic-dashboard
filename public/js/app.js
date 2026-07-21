@@ -440,6 +440,9 @@
     Cards.chartCard({
       id: 'fb_trend', title: '觀看與互動趨勢', el, wide: true,
       types: ['line', 'smooth', 'bar'], defaultType: 'smooth',
+      // 觀看與互動量級差距大，共用 y 軸會讓互動線貼近 0，改用雙 Y 軸：
+      // 觀看留左軸，互動改右軸各自縮放（見 cards.js render() 的 dualAxis）
+      dualAxis: true,
       datasets: { labels: d.fb_page_daily.map(r => dstr(r.date)),
         series: [
           { label: '觀看', data: d.fb_page_daily.map(r => +r.reach), color: '#1565c0' },
@@ -467,6 +470,9 @@
     Cards.chartCard({
       id: 'fb_fans', title: '追蹤者數變化', el,
       types: ['line', 'smooth', 'bar'], defaultType: 'line',
+      // 追蹤者總數基期高（約 12 萬+），每日變動僅個位數～低雙位數，
+      // 若 y 軸強制從 0 開始線會看起來完全平坦，改用 Chart.js 預設自動縮放
+      beginAtZero: false,
       datasets: { labels: d.fb_page_daily.map(r => dstr(r.date)),
         series: [{ label: '追蹤者總數', data: d.fb_page_daily.map(r => +r.fans_total), color: '#26a69a' }] },
       compare: seriesCompare(d.fb_page_daily, cmpOf('fb_page_daily'),

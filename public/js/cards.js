@@ -60,10 +60,16 @@
 
   // datasets: { labels: [...], series: [{ label, data, color }] }
   // cmp（選用）: { labels, series } 同形狀，非 pie 時以虛線疊圖
-  function render(id, canvas, type, ds, cmp) {
+  // dualAxis（選用，預設 false）：series[1]（與其對應的比較線）改繪到右側獨立 y1 軸，
+  //   用於兩條線數值量級差距很大、共用 y 軸會讓其中一條看起來貼近 0 的情況
+  // beginAtZero（選用，預設 true）：y 軸是否強制從 0 開始；false 時交給 Chart.js 自動縮放，
+  //   適合像追蹤者總數這種基期很高、日間變動幅度相對很小的數列
+  function render(id, canvas, type, ds, cmp, opts) {
     if (charts[id]) charts[id].destroy();
+    const { dualAxis = false, beginAtZero = true } = opts || {};
     const isPie = type === 'pie';
     const chartType = isPie ? 'pie' : (type === 'bar' ? 'bar' : 'line');
+    const axisFor = idx => (dualAxis && idx === 1 ? 'y1' : 'y');
     charts[id] = new Chart(canvas, {
       type: chartType,
       data: {
@@ -73,25 +79,32 @@
                backgroundColor: ['#1565c0','#26a69a','#ef6c00','#8e24aa','#c62828',
                                  '#5c6bc0','#00897b','#f9a825','#6d4c41','#78909c'] }]
           : [
-              ...ds.series.map(s => ({
+              ...ds.series.map((s, i) => ({
                 label: s.label, data: s.data,
                 borderColor: s.color, backgroundColor: s.color + '55',
                 tension: type === 'smooth' ? 0.35 : 0,
                 fill: false,
+                ...(dualAxis ? { yAxisID: axisFor(i) } : {}),
               })),
               // 比較資料以索引對齊主區間 labels（第 n 天對第 n 天）；cmp.labels 僅供匯出用
-              ...(cmp && !isPie ? cmp.series.map(s => ({
+              ...(cmp && !isPie ? cmp.series.map((s, i) => ({
                 label: `${s.label}（比較）`, data: s.data.slice(0, ds.labels.length),
                 borderColor: s.color + '88', backgroundColor: s.color + '22',
                 borderDash: [6, 4], tension: type === 'smooth' ? 0.35 : 0, fill: false,
                 ...(chartType === 'bar' ? {} : { pointRadius: 0 }),
+                ...(dualAxis ? { yAxisID: axisFor(i) } : {}),
               })) : []),
             ],
       },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
         plugins: { legend: { display: isPie || ds.series.length > 1 || Boolean(cmp) } },
-        scales: isPie ? {} : { y: { beginAtZero: true } },
+        scales: isPie ? {} : (dualAxis
+          ? {
+              y: { beginAtZero, position: 'left' },
+              y1: { beginAtZero, position: 'right', grid: { drawOnChartArea: false } },
+            }
+          : { y: { beginAtZero } }),
       },
     });
   }
@@ -100,7 +113,10 @@
   // compare（選用）: { labels, series } 同 datasets，非 pie 疊虛線比較圖
   // exp（選用）: { filename, fields: [{key,label}], rows: [{...}] } — 提供時卡頭顯示匯出鈕
   // actions（選用）: [{label, onClick}] — 卡頭右側小動作鈕（如報表的編輯/刪除）
-  function chartCard({ id, title, el, types, defaultType, datasets, wide, compare, exp, cid, actions }) {
+  // dualAxis / beginAtZero（皆選用）：見 render() 註解；未提供時維持既有預設行為，
+  //   不影響其他呼叫端（GA 趨勢、廣告花費/點擊、自訂報表等）
+  function chartCard({ id, title, el, types, defaultType, datasets, wide, compare, exp, cid, actions,
+                        dualAxis, beginAtZero }) {
     const card = document.createElement('div');
     card.className = 'card' + (wide ? ' wide' : '');
     const finalCid = cid || String(id || title || '').replace(/\s+/g, '_');
@@ -122,7 +138,7 @@
         localStorage.setItem(prefKey(id), t);
         sw.querySelectorAll('button').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        render(id, canvas, current, datasets, compare);
+        render(id, canvas, current, datasets, compare, { dualAxis, beginAtZero });
       };
       sw.appendChild(btn);
     }
@@ -152,7 +168,7 @@
     wrap.appendChild(canvas);
     card.appendChild(wrap);
     el.appendChild(card);
-    render(id, canvas, current, datasets, compare);
+    render(id, canvas, current, datasets, compare, { dualAxis, beginAtZero });
   }
 
   function kpiCard({ el, label, value, delta, cid }) {
