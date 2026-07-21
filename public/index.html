@@ -85,7 +85,13 @@
       </div>
     </header>
     <main>
-      <section id="page-overview" class="page active"></section>
+      <section id="page-overview" class="page active">
+        <div id="overview-toolbar">
+          <button type="button" id="edit-layout-btn">編輯版面</button>
+          <button type="button" id="edit-layout-default-btn" hidden>編輯全部門預設版</button>
+        </div>
+        <div id="overview-cards"></div>
+      </section>
       <section id="page-ga" class="page"></section>
       <section id="page-fb_insights" class="page"></section>
       <section id="page-fb_posts" class="page"></section>
@@ -146,6 +152,21 @@
     <p id="reset-pw-error" class="form-error"></p>
     <label>新密碼<input type="password" id="reset-pw-new" placeholder="至少 6 字元" autocomplete="new-password"></label>
     <div id="reset-pw-actions"><button type="button" id="reset-pw-cancel">取消</button><button type="button" id="reset-pw-save">重設</button></div>
+  </div>
+</div>
+
+<div id="layout-edit-modal" hidden>
+  <div id="layout-edit-panel">
+    <h3 id="layout-edit-title">編輯版面</h3>
+    <p id="layout-edit-warning" class="form-error" hidden>此變更將影響所有未自訂版面的使用者</p>
+    <p class="layout-edit-hint">勾選要顯示的卡片，拖曳 <span class="drag-handle">⠿</span> 調整順序。</p>
+    <div id="layout-edit-list"></div>
+    <div id="layout-edit-actions">
+      <button type="button" id="layout-edit-restore">恢復預設</button>
+      <span class="spacer"></span>
+      <button type="button" id="layout-edit-cancel">取消</button>
+      <button type="button" id="layout-edit-save">儲存</button>
+    </div>
   </div>
 </div>
 

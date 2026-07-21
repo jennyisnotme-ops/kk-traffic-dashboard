@@ -3,7 +3,7 @@
   const $ = s => document.querySelector(s);
   const state = { token: localStorage.getItem('traf_token') || '', me: null,
     from: '', to: '', compareOn: false, compareMode: 'prev', cmpFrom: '', cmpTo: '',
-    data: null, cmpData: null, reports: [] };
+    data: null, cmpData: null, reports: [], overviewCards: null, overviewEditMode: null };
 
   // ── 日期工具（台北時區）──────────────────────────
   function today() {
@@ -210,7 +210,9 @@
       state.cmpData = (r.from && r.to) ? await api(q(r)) : null;
     } else state.cmpData = null;
     renderStatus(); renderOverview(); renderGa(); renderFbInsights(); renderFbPosts(); renderAds(); renderCustom();
-    initSortable($('#page-overview'), 'overview');
+    // 總覽卡片不走這裡的 initSortable：總覽拖拉已改為「編輯版面」→ PUT /api/layout 的
+    // 正式版面資料（見 renderOverviewCards/openLayoutEdit），與其他頁籤純 localStorage
+    // 拖拉記憶徹底區隔，避免共用同一把 key 造成互相污染。
     initSortable($('#page-ga'), 'ga');
     initSortable($('#page-fb_insights'), 'fb');
     initSortable($('#page-fb_posts'), 'fb_posts');
@@ -259,73 +261,251 @@
       (fails.length ? ` <span class="warn">⚠ ${fails.map(f => f.source).join('/')} 抓取失敗</span>` : '');
   }
 
+  // ── 總覽卡片庫 ───────────────────────────────────
+  // 內建 7 張卡（4 KPI + 3 趨勢圖），render(el) 各自對應原本 renderOverview() 的寫死內容。
+  // 動態卡（自訂報表 custom_<id>）不在此陣列中，由 overviewCatalog() 依 state.reports 附加。
+  const OVERVIEW_BUILTIN_CARDS = [
+    { cid: 'ov_kpi_ga_users', label: 'GA 使用者（區間加總）', render(el) {
+        const d = state.data;
+        Cards.kpiCard({ el, cid: 'ov_kpi_ga_users', label: 'GA 使用者（區間加總）',
+          value: num(sum(d.ga_daily, 'users')), delta: kpiDelta('ga_daily', 'users') });
+      } },
+    { cid: 'ov_kpi_ga_sessions', label: 'GA 工作階段', render(el) {
+        const d = state.data;
+        Cards.kpiCard({ el, cid: 'ov_kpi_ga_sessions', label: 'GA 工作階段',
+          value: num(sum(d.ga_daily, 'sessions')), delta: kpiDelta('ga_daily', 'sessions') });
+      } },
+    { cid: 'ov_kpi_fb_reach', label: '粉專觀看', render(el) {
+        const d = state.data;
+        Cards.kpiCard({ el, cid: 'ov_kpi_fb_reach', label: '粉專觀看',
+          value: num(sum(d.fb_page_daily, 'reach')), delta: kpiDelta('fb_page_daily', 'reach') });
+      } },
+    { cid: 'ov_kpi_ads_spend', label: '廣告花費', render(el) {
+        const d = state.data;
+        Cards.kpiCard({ el, cid: 'ov_kpi_ads_spend', label: '廣告花費',
+          value: money(sum(d.ads_daily, 'spend')), delta: kpiDelta('ads_daily', 'spend') });
+      } },
+    { cid: 'ov_ga', label: 'GA 每日工作階段', render(el) {
+        const d = state.data;
+        Cards.chartCard({
+          id: 'ov_ga', title: 'GA 每日工作階段', el,
+          types: ['line', 'smooth', 'bar'], defaultType: 'smooth',
+          datasets: { labels: d.ga_daily.map(r => dstr(r.date)),
+            series: [{ label: '工作階段', data: d.ga_daily.map(r => +r.sessions), color: '#1565c0' }] },
+          compare: seriesCompare(d.ga_daily, cmpOf('ga_daily'),
+            rows => [{ label: '工作階段', data: rows.map(r => +r.sessions), color: '#1565c0' }]),
+          exp: {
+            filename: `GA每日工作階段_${state.from}_${state.to}`,
+            fields: [{ key: 'date', label: '日期' }, { key: 'sessions', label: '工作階段' },
+                     ...(state.cmpData ? [{ key: 'sessionsCmp', label: '工作階段（比較）' }] : [])],
+            rows: d.ga_daily.map((r, i) => ({
+              date: dstr(r.date), sessions: +r.sessions,
+              ...(state.cmpData ? { sessionsCmp: cmpOf('ga_daily')?.[i] ? +cmpOf('ga_daily')[i].sessions : '' } : {}),
+            })),
+          },
+        });
+      } },
+    { cid: 'ov_fb', label: '粉專每日觀看', render(el) {
+        const d = state.data;
+        Cards.chartCard({
+          id: 'ov_fb', title: '粉專每日觀看', el,
+          types: ['line', 'smooth', 'bar'], defaultType: 'smooth',
+          datasets: { labels: d.fb_page_daily.map(r => dstr(r.date)),
+            series: [{ label: '觀看', data: d.fb_page_daily.map(r => +r.reach), color: '#26a69a' }] },
+          compare: seriesCompare(d.fb_page_daily, cmpOf('fb_page_daily'),
+            rows => [{ label: '觀看', data: rows.map(r => +r.reach), color: '#26a69a' }]),
+          exp: {
+            filename: `粉專每日觀看_${state.from}_${state.to}`,
+            fields: [{ key: 'date', label: '日期' }, { key: 'reach', label: '觀看' },
+                     ...(state.cmpData ? [{ key: 'reachCmp', label: '觀看（比較）' }] : [])],
+            rows: d.fb_page_daily.map((r, i) => ({
+              date: dstr(r.date), reach: +r.reach,
+              ...(state.cmpData ? { reachCmp: cmpOf('fb_page_daily')?.[i] ? +cmpOf('fb_page_daily')[i].reach : '' } : {}),
+            })),
+          },
+        });
+      } },
+    { cid: 'ov_ads', label: '廣告每日花費', render(el) {
+        const d = state.data;
+        const byDate = groupSum(d.ads_daily, 'date', 'spend');
+        const cb = cmpOf('ads_daily') ? groupSum(cmpOf('ads_daily'), 'date', 'spend') : null;
+        Cards.chartCard({
+          id: 'ov_ads', title: '廣告每日花費', el,
+          types: ['line', 'smooth', 'bar'], defaultType: 'bar',
+          datasets: { labels: byDate.map(r => dstr(r.key)),
+            series: [{ label: '花費', data: byDate.map(r => r.value), color: '#ef6c00' }] },
+          compare: cb ? { labels: cb.map(r => dstr(r.key)),
+            series: [{ label: '花費', data: cb.map(r => r.value), color: '#ef6c00' }] } : null,
+          exp: {
+            filename: `廣告每日花費_${state.from}_${state.to}`,
+            fields: [{ key: 'date', label: '日期' }, { key: 'spend', label: '花費' },
+                     ...(cb ? [{ key: 'spendCmp', label: '花費（比較）' }] : [])],
+            rows: byDate.map((r, i) => ({
+              date: dstr(r.key), spend: r.value,
+              ...(cb ? { spendCmp: cb[i] ? cb[i].value : '' } : {}),
+            })),
+          },
+        });
+      } },
+  ];
+
+  // 完整卡片庫（含動態自訂報表項目）：內建卡在前、自訂報表接在後面，
+  // 這是「首次上線／mine 與 default 皆未設定」情境的 fallback 順序
+  function overviewCatalog() {
+    return OVERVIEW_BUILTIN_CARDS.concat(state.reports.map(rep => ({
+      cid: `custom_${rep.id}`, label: rep.name, render(el) { renderCustomCard(rep, el, true); },
+    })));
+  }
+  function overviewCardDef(cid) { return overviewCatalog().find(c => c.cid === cid); }
+
+  // mine → default → 全卡片庫 fallback 鏈；三者皆 {cards:null} 時代表首次上線，
+  // 直接用卡片庫的天然順序（等同 3c 之前的寫死行為），總覽絕不會因此開天窗。
+  async function resolveOverviewCards() {
+    try {
+      const mine = await api('/api/layout?scope=mine');
+      if (mine.cards) return mine.cards;
+    } catch (_) { /* 讀取失敗一律往下 fallback，不擋住總覽渲染 */ }
+    try {
+      const def = await api('/api/layout?scope=default');
+      if (def.cards) return def.cards;
+    } catch (_) { /* 同上 */ }
+    return overviewCatalog().map(c => ({ cid: c.cid }));
+  }
+
   function renderOverview() {
-    const el = $('#page-overview');
-    if (!hasKeys('ga_daily', 'fb_page_daily', 'ads_daily')) return renderNoPermission(el);
-    el.innerHTML = '';
-    const d = state.data;
-    Cards.kpiCard({ el, label: 'GA 使用者（區間加總）', value: num(sum(d.ga_daily, 'users')),
-      delta: kpiDelta('ga_daily', 'users') });
-    Cards.kpiCard({ el, label: 'GA 工作階段', value: num(sum(d.ga_daily, 'sessions')),
-      delta: kpiDelta('ga_daily', 'sessions') });
-    Cards.kpiCard({ el, label: '粉專觀看', value: num(sum(d.fb_page_daily, 'reach')),
-      delta: kpiDelta('fb_page_daily', 'reach') });
-    Cards.kpiCard({ el, label: '廣告花費', value: money(sum(d.ads_daily, 'spend')),
-      delta: kpiDelta('ads_daily', 'spend') });
-    Cards.chartCard({
-      id: 'ov_ga', title: 'GA 每日工作階段', el,
-      types: ['line', 'smooth', 'bar'], defaultType: 'smooth',
-      datasets: { labels: d.ga_daily.map(r => dstr(r.date)),
-        series: [{ label: '工作階段', data: d.ga_daily.map(r => +r.sessions), color: '#1565c0' }] },
-      compare: seriesCompare(d.ga_daily, cmpOf('ga_daily'),
-        rows => [{ label: '工作階段', data: rows.map(r => +r.sessions), color: '#1565c0' }]),
-      exp: {
-        filename: `GA每日工作階段_${state.from}_${state.to}`,
-        fields: [{ key: 'date', label: '日期' }, { key: 'sessions', label: '工作階段' },
-                 ...(state.cmpData ? [{ key: 'sessionsCmp', label: '工作階段（比較）' }] : [])],
-        rows: d.ga_daily.map((r, i) => ({
-          date: dstr(r.date), sessions: +r.sessions,
-          ...(state.cmpData ? { sessionsCmp: cmpOf('ga_daily')?.[i] ? +cmpOf('ga_daily')[i].sessions : '' } : {}),
-        })),
-      },
-    });
-    Cards.chartCard({
-      id: 'ov_fb', title: '粉專每日觀看', el,
-      types: ['line', 'smooth', 'bar'], defaultType: 'smooth',
-      datasets: { labels: d.fb_page_daily.map(r => dstr(r.date)),
-        series: [{ label: '觀看', data: d.fb_page_daily.map(r => +r.reach), color: '#26a69a' }] },
-      compare: seriesCompare(d.fb_page_daily, cmpOf('fb_page_daily'),
-        rows => [{ label: '觀看', data: rows.map(r => +r.reach), color: '#26a69a' }]),
-      exp: {
-        filename: `粉專每日觀看_${state.from}_${state.to}`,
-        fields: [{ key: 'date', label: '日期' }, { key: 'reach', label: '觀看' },
-                 ...(state.cmpData ? [{ key: 'reachCmp', label: '觀看（比較）' }] : [])],
-        rows: d.fb_page_daily.map((r, i) => ({
-          date: dstr(r.date), reach: +r.reach,
-          ...(state.cmpData ? { reachCmp: cmpOf('fb_page_daily')?.[i] ? +cmpOf('fb_page_daily')[i].reach : '' } : {}),
-        })),
-      },
-    });
-    const byDate = groupSum(d.ads_daily, 'date', 'spend');
-    const cb = cmpOf('ads_daily') ? groupSum(cmpOf('ads_daily'), 'date', 'spend') : null;
-    Cards.chartCard({
-      id: 'ov_ads', title: '廣告每日花費', el,
-      types: ['line', 'smooth', 'bar'], defaultType: 'bar',
-      datasets: { labels: byDate.map(r => dstr(r.key)),
-        series: [{ label: '花費', data: byDate.map(r => r.value), color: '#ef6c00' }] },
-      compare: cb ? { labels: cb.map(r => dstr(r.key)),
-        series: [{ label: '花費', data: cb.map(r => r.value), color: '#ef6c00' }] } : null,
-      exp: {
-        filename: `廣告每日花費_${state.from}_${state.to}`,
-        fields: [{ key: 'date', label: '日期' }, { key: 'spend', label: '花費' },
-                 ...(cb ? [{ key: 'spendCmp', label: '花費（比較）' }] : [])],
-        rows: byDate.map((r, i) => ({
-          date: dstr(r.key), spend: r.value,
-          ...(cb ? { spendCmp: cb[i] ? cb[i].value : '' } : {}),
-        })),
-      },
+    // 無權限時只清空卡片格線本身、保留 #overview-toolbar 節點（連同其上已綁定的
+    // click 監聽器）——若對整個 #page-overview 做 innerHTML=''，會把工具列按鈕
+    // 一併從 DOM 移除，之後就算使用者權限又變回可視也再也點不到（監聽器只在
+    // 模組載入時綁定一次，不會重新綁）。同時把「編輯版面」相關按鈕先隱藏，
+    // 避免無資料可編輯時仍可點開編輯彈窗。
+    if (!hasKeys('ga_daily', 'fb_page_daily', 'ads_daily')) {
+      $('#edit-layout-btn').hidden = true;
+      $('#edit-layout-default-btn').hidden = true;
+      return renderNoPermission($('#overview-cards'));
+    }
+    $('#edit-layout-btn').hidden = false;
+    resolveOverviewCards().then(cards => {
+      state.overviewCards = cards;
+      renderOverviewCards();
+    }).catch(() => {
+      // 理論上 resolveOverviewCards 內部已吞掉個別請求失敗，這裡是最後防線
+      state.overviewCards = overviewCatalog().map(c => ({ cid: c.cid }));
+      renderOverviewCards();
     });
   }
+
+  // 依 state.overviewCards 實際渲染卡片格線（唯讀展示，非編輯模式）；
+  // 未在卡片庫中的 cid（例如自訂報表已被刪除）直接跳過，不讓 .map()/.find() 撞 undefined
+  function renderOverviewCards() {
+    const wrap = $('#overview-cards');
+    wrap.innerHTML = '';
+    wrap._sortable?.destroy?.();
+    wrap._sortable = null;
+    for (const entry of state.overviewCards || []) {
+      const def = overviewCardDef(entry.cid);
+      if (!def) continue;
+      def.render(wrap);
+    }
+    updateEditLayoutButtons();
+  }
+
+  function updateEditLayoutButtons() {
+    $('#edit-layout-default-btn').hidden = !isAdmin();
+  }
+
+  // custom_<id> 卡片渲染邏輯（與 renderCustom() 頁籤共用同一份指標運算），
+  // fromOverview=true 時卡片加 wide class 維持與趨勢圖一致的視覺寬度
+  function renderCustomCard(rep, el, fromOverview) {
+    const axis = dateAxis(state.from, state.to);
+    const series = rep.config.metrics.map(m => metricSeries(state.data, m, axis));
+    let compare = null;
+    if (state.cmpData) {
+      const cr = cmpRangeUsed();
+      const cAxis = dateAxis(cr.from, cr.to);
+      compare = { labels: cAxis.map(d => d.slice(5)),
+                  series: rep.config.metrics.map(m => metricSeries(state.cmpData, m, cAxis)) };
+    }
+    const isAdminUser = state.me?.role === 'admin';
+    Cards.chartCard({
+      id: fromOverview ? `ov_custom_${rep.id}` : `custom_${rep.id}`,
+      cid: `custom_${rep.id}`, title: rep.name, el, wide: true,
+      types: ['line', 'smooth', 'bar', 'pie'], defaultType: rep.config.type,
+      datasets: { labels: axis.map(d => d.slice(5)), series },
+      compare,
+      exp: {
+        filename: `${rep.name}_${state.from}_${state.to}`,
+        fields: [{ key: 'date', label: '日期' }, ...series.map((s, i) => ({ key: `m${i}`, label: s.label }))],
+        rows: axis.map((d, ri) => Object.fromEntries(
+          [['date', d], ...series.map((s, i) => [`m${i}`, s.data[ri]])])),
+      },
+      actions: (!fromOverview && isAdminUser) ? [
+        { label: '編輯', onClick: () => openReportModal(rep) },
+        { label: '刪除', onClick: async () => {
+            if (!confirm(`刪除報表「${rep.name}」？（全部門共用，刪除影響所有人）`)) return;
+            await api(`/api/reports/${rep.id}`, { method: 'DELETE' });
+            await loadReports(); renderCustom();
+          } },
+      ] : [],
+    });
+  }
+
+  // ── 總覽版面編輯模式（獨立於其他頁籤的 localStorage 拖拉記憶機制，
+  //    見檔頭 initSortable：那是被動記憶排序，這裡是主動編輯＋存 DB）────
+  let editSortable = null;
+
+  function openLayoutEdit(scope) {   // scope: 'mine' | 'default'
+    state.overviewEditMode = scope;
+    const modal = $('#layout-edit-modal');
+    $('#layout-edit-title').textContent = scope === 'default' ? '編輯全部門預設版' : '編輯個人版面';
+    $('#layout-edit-warning').hidden = scope !== 'default';
+    const catalog = overviewCatalog();
+    const activeCids = (state.overviewCards || []).map(c => c.cid);
+    // 顯示順序：目前生效順序在前，卡片庫中未被選用的項目接在後面（未勾選狀態）
+    const orderedCids = activeCids.concat(catalog.map(c => c.cid).filter(cid => !activeCids.includes(cid)));
+    const activeSet = new Set(activeCids);
+    const list = $('#layout-edit-list');
+    list.innerHTML = orderedCids.map(cid => {
+      const def = catalog.find(c => c.cid === cid);
+      if (!def) return '';   // 保險：理論上不會發生（orderedCids 完全來自 catalog）
+      return `<div class="layout-edit-row" data-cid="${esc(cid)}">
+        <span class="drag-handle">⠿</span>
+        <label><input type="checkbox" class="layout-edit-cb" ${activeSet.has(cid) ? 'checked' : ''}> ${esc(def.label)}</label>
+      </div>`;
+    }).join('');
+    editSortable?.destroy?.();
+    editSortable = new Sortable(list, { animation: 150, handle: '.drag-handle' });
+    modal.hidden = false;
+  }
+
+  function closeLayoutEdit() {
+    $('#layout-edit-modal').hidden = true;
+    editSortable?.destroy?.();
+    editSortable = null;
+    state.overviewEditMode = null;
+  }
+
+  $('#edit-layout-btn').addEventListener('click', () => openLayoutEdit('mine'));
+  $('#edit-layout-default-btn').addEventListener('click', () => openLayoutEdit('default'));
+  $('#layout-edit-cancel').addEventListener('click', closeLayoutEdit);
+  $('#layout-edit-restore').addEventListener('click', async () => {
+    try {
+      await api('/api/layout/mine', { method: 'DELETE' });
+      closeLayoutEdit();
+      renderOverview();
+    } catch (err) { alert(`恢復預設失敗：${err.message}`); }
+  });
+  $('#layout-edit-save').addEventListener('click', async () => {
+    const rows = [...$('#layout-edit-list').querySelectorAll('.layout-edit-row')];
+    const cards = rows.filter(r => r.querySelector('.layout-edit-cb').checked)
+      .map(r => ({ cid: r.dataset.cid }));
+    if (!cards.length) return alert('至少勾選一張卡片');
+    const scope = state.overviewEditMode || 'mine';
+    try {
+      await api('/api/layout', { method: 'PUT', body: JSON.stringify({ scope, cards }) });
+      closeLayoutEdit();
+      renderOverview();
+    } catch (err) { alert(`儲存失敗：${err.message}`); }
+  });
 
   function groupSum(rows, keyField, valField) {
     const m = new Map();
@@ -676,37 +856,7 @@
     if (!(state.me?.allowed_pages || []).includes('custom')) return renderNoPermission(el);
     el.innerHTML = '';
     const isAdmin = state.me?.role === 'admin';
-    const axis = dateAxis(state.from, state.to);
-    for (const rep of state.reports) {
-      const series = rep.config.metrics.map(m => metricSeries(state.data, m, axis));
-      let compare = null;
-      if (state.cmpData) {
-        const cr = cmpRangeUsed();
-        const cAxis = dateAxis(cr.from, cr.to);
-        compare = { labels: cAxis.map(d => d.slice(5)),
-                    series: rep.config.metrics.map(m => metricSeries(state.cmpData, m, cAxis)) };
-      }
-      Cards.chartCard({
-        id: `custom_${rep.id}`, title: rep.name, el, wide: true,
-        types: ['line', 'smooth', 'bar', 'pie'], defaultType: rep.config.type,
-        datasets: { labels: axis.map(d => d.slice(5)), series },
-        compare,
-        exp: {
-          filename: `${rep.name}_${state.from}_${state.to}`,
-          fields: [{ key: 'date', label: '日期' }, ...series.map((s, i) => ({ key: `m${i}`, label: s.label }))],
-          rows: axis.map((d, ri) => Object.fromEntries(
-            [['date', d], ...series.map((s, i) => [`m${i}`, s.data[ri]])])),
-        },
-        actions: isAdmin ? [
-          { label: '編輯', onClick: () => openReportModal(rep) },
-          { label: '刪除', onClick: async () => {
-              if (!confirm(`刪除報表「${rep.name}」？（全部門共用，刪除影響所有人）`)) return;
-              await api(`/api/reports/${rep.id}`, { method: 'DELETE' });
-              await loadReports(); renderCustom();
-            } },
-        ] : [],
-      });
-    }
+    for (const rep of state.reports) renderCustomCard(rep, el, false);
     if (isAdmin) {
       const add = document.createElement('button');
       add.id = 'add-report-btn';

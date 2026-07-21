@@ -345,6 +345,78 @@ async function main() {
       );
     });
 
+    // h2. 總覽版面編輯（R3c-2）：進入個人編輯模式、勾掉一張卡、儲存 → 少一張卡；
+    // 「恢復預設」→ 卡片數回到編輯前。admin 帳號本身就是這支煙霧測試的登入身分，
+    // 最後必須把 'mine' 版面清乾淨，否則會影響下次執行的基準卡片數。
+    await check('總覽版面編輯：勾掉一張卡並儲存後卡片數減少', async () => {
+      const beforeCount = await page.$$eval('#overview-cards .card', els => els.length);
+      if (beforeCount < 4) throw new Error(`編輯前卡片數異常：${beforeCount}`);
+
+      const editBtnVisible = await isComputedVisible(page, '#edit-layout-btn');
+      if (!editBtnVisible) throw new Error('#edit-layout-btn 未顯示');
+      await page.click('#edit-layout-btn');
+      await page.waitForFunction(
+        () => getComputedStyle(document.querySelector('#layout-edit-modal')).display !== 'none',
+        { timeout: 5000 },
+      );
+      const rowCount = await page.$$eval('#layout-edit-list .layout-edit-row', els => els.length);
+      if (rowCount < 7) throw new Error(`卡片庫項目數異常：${rowCount}（預期至少 7 張內建卡）`);
+
+      // 取消勾選第一列（目前生效順序的第一張卡）
+      await page.evaluate(() => {
+        const cb = document.querySelector('#layout-edit-list .layout-edit-row .layout-edit-cb');
+        if (cb) { cb.checked = false; }
+      });
+      await page.click('#layout-edit-save');
+      await page.waitForFunction(
+        () => getComputedStyle(document.querySelector('#layout-edit-modal')).display === 'none',
+        { timeout: 5000 },
+      );
+      await page.waitForFunction(
+        (n) => document.querySelectorAll('#overview-cards .card').length === n,
+        { timeout: 10000 },
+        beforeCount - 1,
+      );
+      const afterCount = await page.$$eval('#overview-cards .card', els => els.length);
+      if (afterCount !== beforeCount - 1) {
+        throw new Error(`儲存後卡片數應為 ${beforeCount - 1}，實際 ${afterCount}`);
+      }
+    });
+
+    await check('總覽版面編輯：恢復預設後卡片數回到編輯前', async () => {
+      const beforeRestoreCount = await page.$$eval('#overview-cards .card', els => els.length);
+      await page.click('#edit-layout-btn');
+      await page.waitForFunction(
+        () => getComputedStyle(document.querySelector('#layout-edit-modal')).display !== 'none',
+        { timeout: 5000 },
+      );
+      await page.click('#layout-edit-restore');
+      await page.waitForFunction(
+        () => getComputedStyle(document.querySelector('#layout-edit-modal')).display === 'none',
+        { timeout: 5000 },
+      );
+      await page.waitForFunction(
+        (n) => document.querySelectorAll('#overview-cards .card').length > n,
+        { timeout: 10000 },
+        beforeRestoreCount,
+      );
+      const restoredCount = await page.$$eval('#overview-cards .card', els => els.length);
+      if (restoredCount < 7) throw new Error(`恢復預設後卡片數異常：${restoredCount}（預期至少 7 張內建卡）`);
+    });
+
+    // 清理：確保 admin 帳號的 'mine' 版面列不殘留（避免下次煙霧測試從不同基準開始）
+    await check('清理：刪除 admin 的個人版面列（避免污染下次執行）', async () => {
+      const token = await page.evaluate(() => localStorage.getItem('traf_token'));
+      if (!token) throw new Error('找不到 traf_token，無法呼叫清理 API');
+      const res = await page.evaluate(async (t) => {
+        const r = await fetch('/api/layout/mine', { method: 'DELETE', headers: { Authorization: `Bearer ${t}` } });
+        return { status: r.status, body: await r.json().catch(() => null) };
+      }, token);
+      if (res.status !== 200 || !res.body || res.body.ok !== true) {
+        throw new Error(`DELETE /api/layout/mine 未回傳預期結果：status=${res.status}, body=${JSON.stringify(res.body)}`);
+      }
+    });
+
     // i. 報表彈窗（自訂報表頁）
     await check('報表彈窗：新增報表開啟/取消', async () => {
       await page.click('.menu-item[data-page="custom"]');
