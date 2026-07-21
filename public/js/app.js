@@ -483,6 +483,13 @@
     });
   }
 
+  // 只接受 https:// 開頭的網址才組成可點連結，避免 javascript: 等惡意 URI 或屬性逃逸
+  // （esc() 只處理 HTML 實體，貼進 href 屬性前仍需先驗證 scheme）
+  function postLinkHtml(url) {
+    if (!url || !/^https:\/\//i.test(url)) return '—';
+    return `<a href="${esc(url)}" target="_blank" rel="noopener">查看貼文</a>`;
+  }
+
   function renderFbPosts() {
     const el = $('#page-fb_posts');
     if (!hasKeys('fb_posts')) return renderNoPermission(el);
@@ -500,6 +507,7 @@
         { key: 'likes', label: '反應', num: true, format: num },
         { key: 'comments', label: '留言', num: true, format: num },
         { key: 'shares', label: '分享', num: true, format: num },
+        { key: 'permalink_url', label: '連結', format: postLinkHtml, html: true },
       ],
       exp: {
         filename: `粉專貼文成效_${state.from}_${state.to}`,
@@ -507,6 +515,7 @@
           { key: 'created_at', label: '日期' }, { key: 'message', label: '內容' },
           { key: 'reach', label: '觀看' }, { key: 'likes', label: '反應' },
           { key: 'comments', label: '留言' }, { key: 'shares', label: '分享' },
+          { key: 'permalink_url', label: '連結' },
         ],
         rows: postRows,
       },

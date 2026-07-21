@@ -165,7 +165,9 @@
     el.appendChild(card);
   }
 
-  // columns: [{key, label, num?, format?, clsKey?}]
+  // columns: [{key, label, num?, format?, clsKey?, html?}]
+  // html: true → format() 回傳的內容視為已淨化過的 HTML，不再套用 esc()（呼叫端須自行確保安全，
+  //   例如僅允許 https:// 開頭的網址才組出 <a href>，其餘一律走 esc() 純文字）
   // exp（選用）: { filename, fields: [{key,label}], rows: [{...}] } — 提供時卡頭顯示匯出鈕（無 PNG 選項）
   function tableCard({ title, el, columns, rows, wide, exp, cid }) {
     const card = document.createElement('div');
@@ -175,9 +177,9 @@
     const ths = columns.map(c => `<th class="${c.num ? 'num' : ''}">${esc(c.label)}</th>`).join('');
     const trs = rows.map(r =>
       `<tr>${columns.map(c => {
-        const v = c.format ? c.format(r[c.key]) : r[c.key];
+        const v = c.format ? c.format(r[c.key], r) : r[c.key];
         const cls = `${c.num ? 'num' : ''} ${c.clsKey ? esc(r[c.clsKey] || '') : ''}`;
-        return `<td class="${cls}">${esc(v)}</td>`;
+        return `<td class="${cls}">${c.html ? v : esc(v)}</td>`;
       }).join('')}</tr>`).join('');
     const expBtn = exp ? `<button class="export-btn">匯出</button>` : '';
     card.innerHTML = `<div class="card-head"><h2>${esc(title)}</h2>${expBtn}</div>

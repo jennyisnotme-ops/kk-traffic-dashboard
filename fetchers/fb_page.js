@@ -28,6 +28,15 @@ function insightsToDaily(data) {
 // likes/comments summary 欄位需要 pages_read_user_content 權限（現有 token 沒有），
 // 改由 insights 取：post_media_view（reach，post_impressions_unique 已淘汰）、
 // post_activity_by_action_type（like/comment/share；like 含所有心情反應）
+// Graph API 的 permalink_url 通常已是完整 https URL；保險起見，若回傳的是相對路徑
+// （以 / 開頭）則補上網域。缺欄位（例如貼文已被刪除但快取仍在）時回傳 null，不可讓前端因此壞掉。
+function normalizePermalink(url) {
+  if (!url) return null;
+  if (/^https?:\/\//i.test(url)) return url;
+  if (url.startsWith('/')) return `https://www.facebook.com${url}`;
+  return null;
+}
+
 function postsToRows(data) {
   return (data || []).map(p => {
     const ins = {};
@@ -41,6 +50,7 @@ function postsToRows(data) {
       likes: Number(act.like) || 0, // 注意：這是讚+心情等「所有反應」合計，非僅 👍（UI 文案請寫「反應」）
       comments: Number(act.comment) || 0,
       shares: Number(act.share) || 0,
+      permalink_url: normalizePermalink(p.permalink_url),
     };
   });
 }
@@ -76,21 +86,21 @@ async function fetchFbPage(pool, from, to) {
 
   // 3) 近 25 篇貼文成效（UPSERT，成效持續更新）
   const posts = await fbGet(`${pageId}/posts`, {
-    fields: 'id,created_time,message,' +
+    fields: 'id,created_time,message,permalink_url,' +
             'insights.metric(post_media_view,post_activity_by_action_type)',
     limit: 25,
   }, token);
   const rows = postsToRows(posts.data);
   for (const r of rows) {
     await pool.query(
-      `INSERT INTO traf_fb_posts (post_id, created_at, message, reach, likes, comments, shares, fetched_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,now())
+      `INSERT INTO traf_fb_posts (post_id, created_at, message, reach, likes, comments, shares, permalink_url, fetched_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now())
        ON CONFLICT (post_id) DO UPDATE
-         SET message=$3, reach=$4, likes=$5, comments=$6, shares=$7, fetched_at=now()`,
-      [r.post_id, r.created_at, r.message, r.reach, r.likes, r.comments, r.shares]);
+         SET message=$3, reach=$4, likes=$5, comments=$6, shares=$7, permalink_url=$8, fetched_at=now()`,
+      [r.post_id, r.created_at, r.message, r.reach, r.likes, r.comments, r.shares, r.permalink_url]);
   }
 
   return { daily: daily.length, posts: rows.length };
 }
 
-module.exports = { fetchFbPage, insightsToDaily, postsToRows };
+module.exports = { fetchFbPage, insightsToDaily, postsToRows, normalizePermalink };

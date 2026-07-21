@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { insightDate } = require('../lib/meta');
-const { insightsToDaily, postsToRows } = require('../fetchers/fb_page');
+const { insightsToDaily, postsToRows, normalizePermalink } = require('../fetchers/fb_page');
 
 test('insightDate：end_time 代表的是前一天', () => {
   assert.equal(insightDate('2026-07-02T07:00:00+0000'), '2026-07-01');
@@ -29,6 +29,7 @@ test('postsToRows 攤平貼文欄位', () => {
     id: '123_456',
     created_time: '2026-07-01T10:00:00+0000',
     message: '測試貼文',
+    permalink_url: 'https://www.facebook.com/PageName/posts/123456',
     insights: { data: [
       { name: 'post_media_view', values: [{ value: 900 }] },
       { name: 'post_activity_by_action_type', values: [{ value: { like: 10, comment: 3, share: 2 } }] },
@@ -37,12 +38,36 @@ test('postsToRows 攤平貼文欄位', () => {
   assert.deepEqual(postsToRows(data), [{
     post_id: '123_456', created_at: '2026-07-01T10:00:00+0000', message: '測試貼文',
     reach: 900, likes: 10, comments: 3, shares: 2,
+    permalink_url: 'https://www.facebook.com/PageName/posts/123456',
   }]);
 });
 
-test('postsToRows 缺欄位時補 0/空字串', () => {
+test('postsToRows 缺欄位時補 0/空字串，permalink_url 缺失時為 null（不可噴錯）', () => {
   const r = postsToRows([{ id: 'x', created_time: '2026-07-01T10:00:00+0000' }])[0];
   assert.equal(r.message, '');
   assert.equal(r.reach, 0);
   assert.equal(r.shares, 0);
+  assert.equal(r.permalink_url, null);
+});
+
+test('normalizePermalink：已是完整 https URL 原樣通過', () => {
+  assert.equal(
+    normalizePermalink('https://www.facebook.com/PageName/posts/123456'),
+    'https://www.facebook.com/PageName/posts/123456');
+});
+
+test('normalizePermalink：相對路徑補上網域', () => {
+  assert.equal(
+    normalizePermalink('/PageName/posts/123456'),
+    'https://www.facebook.com/PageName/posts/123456');
+});
+
+test('normalizePermalink：缺欄位/null/空字串回傳 null', () => {
+  assert.equal(normalizePermalink(null), null);
+  assert.equal(normalizePermalink(undefined), null);
+  assert.equal(normalizePermalink(''), null);
+});
+
+test('normalizePermalink：非 http(s)/非相對路徑的可疑字串回傳 null（防禦性）', () => {
+  assert.equal(normalizePermalink('javascript:alert(1)'), null);
 });
