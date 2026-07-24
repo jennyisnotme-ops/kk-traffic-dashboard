@@ -130,6 +130,12 @@
   }
 
   function onNavigatePage(page) {
+    // 離開外觀主題頁時，若還有「已預覽但未儲存」的主題色，先還原成真正已儲存的值，
+    // 避免未儲存的預覽色繼續套用在其他頁面（選單/KPI/按鈕），讓使用者誤以為已經存檔
+    if (page !== 'settings_theme' && themePreviewDirty) {
+      applyTheme(state.me?.prefs?.theme?.primary || DEFAULT_PRIMARY);
+      themePreviewDirty = false;
+    }
     if (page === 'users') renderUsers();
     else if (page === 'settings_password') renderSettingsPassword();
     else if (page === 'settings_theme') renderSettingsTheme();
@@ -153,6 +159,9 @@
     { key: 'ink-blue',     name: '黛藍灰', primary: '#7E8CA0' },
   ];
   const DEFAULT_PRIMARY = '#1565c0';
+  // 是否有「已預覽但未儲存」的主題色套用在畫面上；離開外觀主題頁時若為 true 必須還原，
+  // 否則未儲存的預覽色會持續套用到整個 app（選單/KPI/按鈕），跟真的存檔沒兩樣，會誤導使用者
+  let themePreviewDirty = false;
 
   // 將 hex 色碼與白色以指定比例混合，算出淡色版（供 --c-primary-light 使用）
   function lightenHex(hex, whiteRatio = 0.85) {
@@ -1166,7 +1175,7 @@
       <p id="settings-theme-success" class="form-success"></p>
       <div id="theme-swatches" class="theme-swatches">${swatches}</div>
       <label class="theme-custom">自訂顏色
-        <input type="color" id="theme-custom-color" value="${previewPrimary}">
+        <input type="color" id="theme-custom-color" value="${esc(previewPrimary)}">
       </label>
       <button type="button" id="theme-save-btn">儲存</button>
     </div>`;
@@ -1189,12 +1198,19 @@
     }
     markActive();
 
+    // 預覽色是否偏離目前已儲存的值：偏離時才需要在離開頁面時還原（見 onNavigatePage）
+    function markDirty() {
+      const base = (savedPrimary || DEFAULT_PRIMARY).toLowerCase();
+      themePreviewDirty = previewPrimary.toLowerCase() !== base;
+    }
+
     el.querySelectorAll('.theme-swatch').forEach(btn => {
       btn.addEventListener('click', () => {
         previewPrimary = btn.dataset.hex;
         $('#theme-custom-color').value = previewPrimary;
         applyTheme(previewPrimary);
         markActive();
+        markDirty();
       });
     });
 
@@ -1202,6 +1218,7 @@
       previewPrimary = $('#theme-custom-color').value;
       applyTheme(previewPrimary);
       markActive();
+      markDirty();
     });
 
     $('#theme-save-btn').addEventListener('click', async () => {
@@ -1211,6 +1228,7 @@
         await api('/api/me/theme', { method: 'POST', body: JSON.stringify({ primary: previewPrimary }) });
         state.me.prefs = { ...(state.me.prefs || {}), theme: { primary: previewPrimary } };
         savedPrimary = previewPrimary;
+        themePreviewDirty = false;
         markActive();
         $('#settings-theme-success').textContent = '主題已儲存';
       } catch (err) {
