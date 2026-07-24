@@ -95,6 +95,9 @@
     state.me = me;
     $('#login-overlay').style.display = 'none';
     $('#main').hidden = false;
+    // 帳號 prefs 存的主題（非 localStorage）：有值即套用，讓外觀在不同裝置/重新整理後都一致
+    const savedPrimary = me?.prefs?.theme?.primary;
+    if (savedPrimary) applyTheme(savedPrimary);
     Cards.configureExport({
       post: async payload => {
         const res = await fetch('/api/export', {
@@ -129,12 +132,42 @@
   function onNavigatePage(page) {
     if (page === 'users') renderUsers();
     else if (page === 'settings_password') renderSettingsPassword();
-    // settings_theme：空殼頁，3c 再填內容，這裡不需要處理
+    else if (page === 'settings_theme') renderSettingsTheme();
   }
 
   // ── 左側選單與日期列 ─────────────────────────────
   const PAGES = ['overview', 'ga', 'fb_insights', 'fb_posts', 'fb_ads', 'custom'];
   const SETTINGS_PAGES = ['settings_password', 'settings_theme'];
+
+  // ── 外觀主題：十色莫蘭迪主題票 ─────────────────────
+  const THEMES = [
+    { key: 'dusty-blue',   name: '霧灰藍', primary: '#8FA5B5' },
+    { key: 'sage',         name: '灰豆綠', primary: '#A3B49A' },
+    { key: 'blush',        name: '藕粉',   primary: '#C9A9A6' },
+    { key: 'oat',          name: '燕麥杏', primary: '#C9B79C' },
+    { key: 'wisteria',     name: '灰紫藤', primary: '#A79FB4' },
+    { key: 'misty-rose',   name: '霧玫瑰', primary: '#B48E92' },
+    { key: 'teal-gray',    name: '青灰',   primary: '#8FA8A3' },
+    { key: 'warm-taupe',   name: '暖灰褐', primary: '#A89A8E' },
+    { key: 'oat-white',    name: '灰米白', primary: '#BEB8A7' },
+    { key: 'ink-blue',     name: '黛藍灰', primary: '#7E8CA0' },
+  ];
+  const DEFAULT_PRIMARY = '#1565c0';
+
+  // 將 hex 色碼與白色以指定比例混合，算出淡色版（供 --c-primary-light 使用）
+  function lightenHex(hex, whiteRatio = 0.85) {
+    const m = /^#([0-9a-f]{6})$/i.exec(hex);
+    if (!m) return hex;
+    const n = parseInt(m[1], 16);
+    const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    const mix = c => Math.round(c * (1 - whiteRatio) + 255 * whiteRatio);
+    const toHex = c => c.toString(16).padStart(2, '0');
+    return `#${toHex(mix(r))}${toHex(mix(g))}${toHex(mix(b))}`;
+  }
+  function applyTheme(primary) {
+    document.documentElement.style.setProperty('--c-primary', primary);
+    document.documentElement.style.setProperty('--c-primary-light', lightenHex(primary));
+  }
 
   $('#date-preset').addEventListener('change', () => {
     const v = $('#date-preset').value;
@@ -1112,6 +1145,76 @@
         $('#cur-password').value = ''; $('#new-password').value = ''; $('#confirm-password').value = '';
       } catch (err) {
         $('#settings-password-error').textContent = err.message === '目前密碼不正確' ? '目前密碼不正確' : err.message;
+      }
+    });
+  }
+
+  // ── 設定：外觀主題 ───────────────────────────────
+  function renderSettingsTheme() {
+    const el = $('#page-settings_theme');
+    let savedPrimary = state.me?.prefs?.theme?.primary || null;
+    let previewPrimary = savedPrimary || DEFAULT_PRIMARY;
+
+    const swatches = THEMES.map(t => `
+      <button type="button" class="theme-swatch" data-hex="${t.primary}" style="background:${t.primary}">
+        <span class="theme-swatch-name">${esc(t.name)}</span>
+      </button>`).join('');
+
+    el.innerHTML = `<div id="theme-settings">
+      <h3>外觀主題</h3>
+      <p id="settings-theme-error" class="form-error"></p>
+      <p id="settings-theme-success" class="form-success"></p>
+      <div id="theme-swatches" class="theme-swatches">${swatches}</div>
+      <label class="theme-custom">自訂顏色
+        <input type="color" id="theme-custom-color" value="${previewPrimary}">
+      </label>
+      <button type="button" id="theme-save-btn">儲存</button>
+    </div>`;
+
+    function markActive() {
+      el.querySelectorAll('.theme-swatch').forEach(btn => {
+        const hex = btn.dataset.hex.toLowerCase();
+        btn.classList.toggle('active', hex === previewPrimary.toLowerCase());
+        let mark = btn.querySelector('.theme-swatch-current');
+        const isSaved = savedPrimary && hex === savedPrimary.toLowerCase();
+        if (isSaved && !mark) {
+          mark = document.createElement('span');
+          mark.className = 'theme-swatch-current';
+          mark.textContent = '目前套用中';
+          btn.appendChild(mark);
+        } else if (!isSaved && mark) {
+          mark.remove();
+        }
+      });
+    }
+    markActive();
+
+    el.querySelectorAll('.theme-swatch').forEach(btn => {
+      btn.addEventListener('click', () => {
+        previewPrimary = btn.dataset.hex;
+        $('#theme-custom-color').value = previewPrimary;
+        applyTheme(previewPrimary);
+        markActive();
+      });
+    });
+
+    $('#theme-custom-color').addEventListener('input', () => {
+      previewPrimary = $('#theme-custom-color').value;
+      applyTheme(previewPrimary);
+      markActive();
+    });
+
+    $('#theme-save-btn').addEventListener('click', async () => {
+      $('#settings-theme-error').textContent = '';
+      $('#settings-theme-success').textContent = '';
+      try {
+        await api('/api/me/theme', { method: 'POST', body: JSON.stringify({ primary: previewPrimary }) });
+        state.me.prefs = { ...(state.me.prefs || {}), theme: { primary: previewPrimary } };
+        savedPrimary = previewPrimary;
+        markActive();
+        $('#settings-theme-success').textContent = '主題已儲存';
+      } catch (err) {
+        $('#settings-theme-error').textContent = err.message;
       }
     });
   }

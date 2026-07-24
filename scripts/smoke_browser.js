@@ -485,6 +485,87 @@ async function main() {
       await page.waitForSelector('#settings-password-form', { timeout: 5000 });
     });
 
+    // i3b. 設定→外觀主題：點色卡即時預覽、儲存後寫入帳號 prefs（重新整理＋重新登入後仍保留，
+    // 證明不是只存在 localStorage 的預覽狀態），事後另有清理步驟還原成預設色
+    let themeChosenHex = null;
+    await check('外觀主題：點色卡即時預覽並儲存，重新整理＋重新登入後仍保留', async () => {
+      await page.click('.menu-item[data-page="settings_theme"]');
+      await page.waitForFunction(
+        () => document.querySelector('#page-settings_theme')?.classList.contains('active'),
+        { timeout: 5000 },
+      );
+      await page.waitForSelector('#theme-swatches .theme-swatch', { timeout: 5000 });
+
+      const swatchCount = await page.$$eval('#theme-swatches .theme-swatch', els => els.length);
+      if (swatchCount !== 10) throw new Error(`預期 10 個十色莫蘭迪色卡，實際 ${swatchCount}`);
+
+      themeChosenHex = await page.evaluate(
+        () => document.querySelector('#theme-swatches .theme-swatch')?.dataset.hex.toLowerCase() || null,
+      );
+      if (!themeChosenHex) throw new Error('找不到色卡按鈕的 data-hex');
+
+      await page.click('#theme-swatches .theme-swatch');
+      await page.waitForFunction(
+        (hex) => getComputedStyle(document.documentElement).getPropertyValue('--c-primary').trim().toLowerCase() === hex,
+        { timeout: 5000 },
+        themeChosenHex,
+      );
+
+      await page.click('#theme-save-btn');
+      await page.waitForFunction(
+        () => document.querySelector('#settings-theme-success')?.textContent.trim() === '主題已儲存',
+        { timeout: 5000 },
+      );
+
+      // 重新整理整頁（＋視情況重新登入）：驗證主題色來自 GET /api/me 的 prefs.theme，
+      // 不是僅存在瀏覽器記憶體或 localStorage 的預覽狀態
+      await page.goto(BASE_URL, { waitUntil: 'networkidle0' });
+      await page.waitForFunction(() => {
+        const main = document.querySelector('#main');
+        const mainVisible = main && getComputedStyle(main).display !== 'none';
+        const loginVisible = getComputedStyle(document.querySelector('#login-overlay')).display !== 'none';
+        return mainVisible || loginVisible;
+      }, { timeout: 10000 });
+      const alreadyIn = await page.evaluate(() => {
+        const main = document.querySelector('#main');
+        return Boolean(main && getComputedStyle(main).display !== 'none');
+      });
+      if (!alreadyIn) {
+        await page.waitForSelector('#login-username', { timeout: 5000 });
+        await page.type('#login-username', ADMIN_USERNAME);
+        await page.type('#login-password', ADMIN_SECRET);
+        await page.click('#login-form button[type="submit"]');
+      }
+      await page.waitForFunction(() => {
+        const main = document.querySelector('#main');
+        return main && getComputedStyle(main).display !== 'none';
+      }, { timeout: 10000 });
+
+      const persistedHex = await page.evaluate(
+        () => getComputedStyle(document.documentElement).getPropertyValue('--c-primary').trim().toLowerCase(),
+      );
+      if (persistedHex !== themeChosenHex) {
+        throw new Error(`重新整理並登入後 --c-primary 未保留（非 localStorage 預覽）：預期 ${themeChosenHex}，實際 ${persistedHex}`);
+      }
+    });
+
+    // 清理：把 admin 帳號的主題色還原成預設值，避免污染下次煙霧測試與使用者實際帳號的外觀
+    await check('清理：還原 admin 主題色為預設值', async () => {
+      const token = await page.evaluate(() => localStorage.getItem('traf_token'));
+      if (!token) throw new Error('找不到 traf_token，無法呼叫清理 API');
+      const res = await page.evaluate(async (t) => {
+        const r = await fetch('/api/me/theme', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` },
+          body: JSON.stringify({ primary: '#1565c0' }),
+        });
+        return { status: r.status, body: await r.json().catch(() => null) };
+      }, token);
+      if (res.status !== 200 || !res.body || res.body.ok !== true) {
+        throw new Error(`POST /api/me/theme 還原預設未回傳預期結果：status=${res.status}, body=${JSON.stringify(res.body)}`);
+      }
+    });
+
     // 切回總覽，方便後續步驟
     await page.click('.menu-item[data-page="overview"]');
     await page.waitForFunction(

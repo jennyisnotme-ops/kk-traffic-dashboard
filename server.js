@@ -75,7 +75,7 @@ const { findUserByCreds, createSession, destroySession, getToken,
   requireAuth, requireAdmin } = require('./lib/auth');
 const { runAll, scheduleDaily, backfill } = require('./jobs/daily');
 const XLSX = require('xlsx');
-const { validateExportPayload, validateReportConfig, validateNewUser, validateLayoutCards, ALL_PAGES } = require('./lib/validators');
+const { validateExportPayload, validateReportConfig, validateNewUser, validateLayoutCards, ALL_PAGES, validateThemeColor } = require('./lib/validators');
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -132,6 +132,19 @@ app.post('/api/me/password', requireAuth, async (req, res) => {
   if (!ok) return res.status(401).json({ error: '目前密碼不正確' });
   const hash = await bcrypt.hash(newPassword, 10);
   await pool.query('UPDATE traf_users SET secret = $1 WHERE id = $2', [hash, req.user.id]);
+  res.json({ ok: true });
+});
+
+// 使用者自助設定外觀主題（存進 prefs.theme，帳號跨裝置共用，不是 localStorage）
+app.post('/api/me/theme', requireAuth, async (req, res) => {
+  const { primary } = req.body || {};
+  const v = validateThemeColor(primary);
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  // prefs.theme 存物件（非裸字串），因為前端與 GET /api/me 皆以 prefs.theme.primary 讀取
+  await pool.query(
+    "UPDATE traf_users SET prefs = jsonb_set(coalesce(prefs, '{}'::jsonb), '{theme}', $1::jsonb) WHERE id = $2",
+    [JSON.stringify({ primary }), req.user.id],
+  );
   res.json({ ok: true });
 });
 

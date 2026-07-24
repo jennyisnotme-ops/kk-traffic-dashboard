@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { validateExportPayload, validateReportConfig, validateNewUser, validateLayoutCards } = require('../lib/validators');
+const { validateExportPayload, validateReportConfig, validateNewUser, validateLayoutCards, validateThemeColor } = require('../lib/validators');
 
 test('validateExportPayload 接受合法 payload', () => {
   assert.deepEqual(
@@ -104,4 +104,29 @@ test('validateLayoutCards 拒絕不合法的 type', () => {
 test('validateLayoutCards 拒絕非陣列', () => {
   assert.equal(validateLayoutCards(null).ok, false);
   assert.equal(validateLayoutCards({}).ok, false);
+});
+
+test('validateThemeColor 接受合法 hex 色碼', () => {
+  assert.deepEqual(validateThemeColor('#8FA5B5'), { ok: true });
+  assert.deepEqual(validateThemeColor('#1565c0'), { ok: true });
+  assert.deepEqual(validateThemeColor('#abcdef'), { ok: true });
+});
+
+test('validateThemeColor 拒絕缺少 #', () => {
+  assert.equal(validateThemeColor('8FA5B5').ok, false);
+});
+
+test('validateThemeColor 拒絕長度錯誤', () => {
+  assert.equal(validateThemeColor('#8FA5B').ok, false);
+  assert.equal(validateThemeColor('#8FA5B55').ok, false);
+});
+
+test('validateThemeColor 拒絕非 hex 字元', () => {
+  assert.equal(validateThemeColor('#GGHHII').ok, false);
+});
+
+test('validateThemeColor 拒絕非字串', () => {
+  assert.equal(validateThemeColor(null).ok, false);
+  assert.equal(validateThemeColor(undefined).ok, false);
+  assert.equal(validateThemeColor(123456).ok, false);
 });

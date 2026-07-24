@@ -167,6 +167,21 @@ main { padding: 20px; }
 .form-error { color: var(--c-danger); font-size: 13px; min-height: 1em; }
 .form-success { color: var(--c-success); font-size: 13px; min-height: 1em; }
 
+/* 設定：外觀主題 — 十色莫蘭迪色票 + 自訂調色盤 */
+#theme-settings { background: var(--c-card); border-radius: 12px; padding: 20px; max-width: 480px;
+  display: flex; flex-direction: column; gap: 12px; }
+.theme-swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 10px; }
+.theme-swatch { position: relative; border: 2px solid var(--c-border); border-radius: 10px; cursor: pointer;
+  padding: 24px 6px 8px; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.35); font-size: 12px; }
+.theme-swatch.active { border-color: var(--c-text); box-shadow: 0 0 0 2px var(--c-card), 0 0 0 4px var(--c-text); }
+.theme-swatch-name { display: block; }
+.theme-swatch-current { display: block; font-size: 10px; margin-top: 2px; opacity: .9; }
+.theme-custom { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.theme-custom input[type="color"] { width: 40px; height: 30px; border: 1px solid var(--c-border);
+  border-radius: 6px; padding: 0; cursor: pointer; }
+#theme-save-btn { padding: 8px 16px; border: 0; border-radius: 8px; background: var(--c-primary);
+  color: var(--c-on-primary); cursor: pointer; align-self: flex-start; }
+
 /* 帳號新增/編輯彈窗、重設密碼彈窗：沿用 export/report modal 的 .modal-style pattern */
 #user-modal, #reset-pw-modal { position: fixed; inset: 0; background: var(--c-overlay);
   display: flex; align-items: center; justify-content: center; z-index: 50; }
