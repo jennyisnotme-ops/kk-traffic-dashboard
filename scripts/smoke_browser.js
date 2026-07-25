@@ -230,6 +230,34 @@ async function main() {
       if (loginDisplay !== 'none') throw new Error(`登入層應消失，實際 display=${loginDisplay}`);
     });
 
+    // d2. 快照 admin 目前的個人化狀態（個人版面、主題色），供結尾清理步驟精準還原。
+    // 不能盲目重置成出廠預設值：一旦 admin 之後真的自訂了版面或選了莫蘭迪主題色，
+    // 每次 npm run smoke 都會把它洗掉，這支測試必須是非破壞性的。
+    let snapshotMineCards = null;
+    let snapshotThemePrimary = null;
+    await check('快照：讀取 admin 目前的個人版面與主題色（供結尾精準還原）', async () => {
+      const token = await page.evaluate(() => localStorage.getItem('traf_token'));
+      if (!token) throw new Error('找不到 traf_token，無法快照現有狀態');
+
+      const layoutRes = await page.evaluate(async (t) => {
+        const r = await fetch('/api/layout?scope=mine', { headers: { Authorization: `Bearer ${t}` } });
+        return { status: r.status, body: await r.json().catch(() => null) };
+      }, token);
+      if (layoutRes.status !== 200 || !layoutRes.body) {
+        throw new Error(`GET /api/layout?scope=mine 快照失敗：status=${layoutRes.status}`);
+      }
+      snapshotMineCards = layoutRes.body.cards; // null（無個人版面）或卡片陣列
+
+      const meRes = await page.evaluate(async (t) => {
+        const r = await fetch('/api/me', { headers: { Authorization: `Bearer ${t}` } });
+        return { status: r.status, body: await r.json().catch(() => null) };
+      }, token);
+      if (meRes.status !== 200 || !meRes.body) {
+        throw new Error(`GET /api/me 快照失敗：status=${meRes.status}`);
+      }
+      snapshotThemePrimary = (meRes.body.prefs && meRes.body.prefs.theme && meRes.body.prefs.theme.primary) || null;
+    });
+
     // e. 總覽頁：至少 4 張 .card
     await check('總覽頁：10 秒內至少渲染 4 張 .card', async () => {
       await page.waitForFunction(
@@ -347,7 +375,8 @@ async function main() {
 
     // h2. 總覽版面編輯（R3c-2）：進入個人編輯模式、勾掉一張卡、儲存 → 少一張卡；
     // 「恢復預設」→ 卡片數回到編輯前。admin 帳號本身就是這支煙霧測試的登入身分，
-    // 最後必須把 'mine' 版面清乾淨，否則會影響下次執行的基準卡片數。
+    // 最後必須把 'mine' 版面還原成本次執行前的快照狀態（見上方 d2 快照 / 下方清理步驟），
+    // 不能無條件清空，否則會洗掉 admin 真正存好的個人化版面。
     await check('總覽版面編輯：勾掉一張卡並儲存後卡片數減少', async () => {
       const beforeCount = await page.$$eval('#overview-cards .card', els => els.length);
       if (beforeCount < 4) throw new Error(`編輯前卡片數異常：${beforeCount}`);
@@ -404,16 +433,34 @@ async function main() {
       if (restoredCount < 7) throw new Error(`恢復預設後卡片數異常：${restoredCount}（預期至少 7 張內建卡）`);
     });
 
-    // 清理：確保 admin 帳號的 'mine' 版面列不殘留（避免下次煙霧測試從不同基準開始）
-    await check('清理：刪除 admin 的個人版面列（避免污染下次執行）', async () => {
+    // 清理：把 admin 帳號的 'mine' 版面精準還原成本次執行「開始前」的快照狀態。
+    // 快照為 null（本來就沒有個人版面）→ 沿用 DELETE，結果等價於還原成 null；
+    // 快照有真實卡片陣列（admin 真的自訂過版面）→ 改用 PUT 寫回原始卡片，
+    // 絕不能無條件 DELETE，否則會把 admin 事先存好的個人化版面洗掉。
+    await check('清理：把 admin 個人版面還原成執行前的快照狀態', async () => {
       const token = await page.evaluate(() => localStorage.getItem('traf_token'));
       if (!token) throw new Error('找不到 traf_token，無法呼叫清理 API');
-      const res = await page.evaluate(async (t) => {
-        const r = await fetch('/api/layout/mine', { method: 'DELETE', headers: { Authorization: `Bearer ${t}` } });
-        return { status: r.status, body: await r.json().catch(() => null) };
-      }, token);
-      if (res.status !== 200 || !res.body || res.body.ok !== true) {
-        throw new Error(`DELETE /api/layout/mine 未回傳預期結果：status=${res.status}, body=${JSON.stringify(res.body)}`);
+
+      if (snapshotMineCards === null) {
+        const res = await page.evaluate(async (t) => {
+          const r = await fetch('/api/layout/mine', { method: 'DELETE', headers: { Authorization: `Bearer ${t}` } });
+          return { status: r.status, body: await r.json().catch(() => null) };
+        }, token);
+        if (res.status !== 200 || !res.body || res.body.ok !== true) {
+          throw new Error(`DELETE /api/layout/mine 未回傳預期結果：status=${res.status}, body=${JSON.stringify(res.body)}`);
+        }
+      } else {
+        const res = await page.evaluate(async (t, cards) => {
+          const r = await fetch('/api/layout', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` },
+            body: JSON.stringify({ scope: 'mine', cards }),
+          });
+          return { status: r.status, body: await r.json().catch(() => null) };
+        }, token, snapshotMineCards);
+        if (res.status !== 200 || !res.body || !Array.isArray(res.body.cards)) {
+          throw new Error(`PUT /api/layout 還原快照版面未回傳預期結果：status=${res.status}, body=${JSON.stringify(res.body)}`);
+        }
       }
     });
 
@@ -486,7 +533,7 @@ async function main() {
     });
 
     // i3b. 設定→外觀主題：點色卡即時預覽、儲存後寫入帳號 prefs（重新整理＋重新登入後仍保留，
-    // 證明不是只存在 localStorage 的預覽狀態），事後另有清理步驟還原成預設色
+    // 證明不是只存在 localStorage 的預覽狀態），事後另有清理步驟精準還原成執行前的快照色
     let themeChosenHex = null;
     await check('外觀主題：點色卡即時預覽並儲存，重新整理＋重新登入後仍保留', async () => {
       await page.click('.menu-item[data-page="settings_theme"]');
@@ -549,20 +596,24 @@ async function main() {
       }
     });
 
-    // 清理：把 admin 帳號的主題色還原成預設值，避免污染下次煙霧測試與使用者實際帳號的外觀
-    await check('清理：還原 admin 主題色為預設值', async () => {
+    // 清理：把 admin 帳號的主題色精準還原成本次執行「開始前」的快照值。
+    // 快照為 null（本來就沒存過主題色）→ 還原成 style.css 的 --c-primary 出廠值 #1565c0
+    // （與唯一的 CSS 來源值一致，不另外新增第四份硬編碼）；
+    // 快照有真實色碼（admin 真的選過莫蘭迪色）→ 寫回原始色碼，不能盲目改成 #1565c0。
+    await check('清理：還原 admin 主題色為執行前的快照值', async () => {
       const token = await page.evaluate(() => localStorage.getItem('traf_token'));
       if (!token) throw new Error('找不到 traf_token，無法呼叫清理 API');
-      const res = await page.evaluate(async (t) => {
+      const restorePrimary = snapshotThemePrimary || '#1565c0';
+      const res = await page.evaluate(async (t, primary) => {
         const r = await fetch('/api/me/theme', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` },
-          body: JSON.stringify({ primary: '#1565c0' }),
+          body: JSON.stringify({ primary }),
         });
         return { status: r.status, body: await r.json().catch(() => null) };
-      }, token);
+      }, token, restorePrimary);
       if (res.status !== 200 || !res.body || res.body.ok !== true) {
-        throw new Error(`POST /api/me/theme 還原預設未回傳預期結果：status=${res.status}, body=${JSON.stringify(res.body)}`);
+        throw new Error(`POST /api/me/theme 還原快照未回傳預期結果：status=${res.status}, body=${JSON.stringify(res.body)}`);
       }
     });
 
