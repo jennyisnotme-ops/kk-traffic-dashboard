@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS traf_fb_posts (
   fetched_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE traf_fb_posts ADD COLUMN IF NOT EXISTS permalink_url TEXT;
+ALTER TABLE traf_fb_posts ADD COLUMN IF NOT EXISTS thumbnail_url TEXT;
 
 CREATE TABLE IF NOT EXISTS traf_ads_daily (
   date          DATE NOT NULL,

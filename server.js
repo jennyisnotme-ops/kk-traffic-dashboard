@@ -13,6 +13,15 @@ app.set('trust proxy', 1);
 
 app.use(helmet({
   strictTransportSecurity: { maxAge: 63072000, includeSubDomains: true, preload: true },
+  contentSecurityPolicy: {
+    directives: {
+      ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+      // 貼文成效表縮圖（FB full_picture）來自 FB CDN，網域眾多且會輪替
+      // （scontent-*.fbcdn.net、external-*.fbcdn.net 等），無法列固定白名單；
+      // 前端已強制只接受 https:// 開頭的網址才組成 <img src>，故放寬為 https: 圖片來源
+      'img-src': ["'self'", 'data:', 'https:'],
+    },
+  },
 }));
 app.use(express.json({ limit: '1mb' }));
 app.use('/api', rateLimit({

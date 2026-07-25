@@ -111,6 +111,11 @@ main { padding: 20px; }
 .card th { color: var(--c-text-muted); font-weight: normal; }
 .card td.num, .card th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
+/* 貼文成效表：內文左側縮圖 */
+.fb-post-cell { display: flex; align-items: center; gap: 8px; }
+.fb-post-thumb { width: 48px; height: 48px; flex: 0 0 auto; object-fit: cover;
+  border-radius: 8px; border: 1px solid var(--c-border-lighter); }
+
 .delta-up { color: var(--c-success); }
 .delta-down { color: var(--c-danger); }
 .kpi .kpi-delta { font-size: 13px; font-weight: bold; }

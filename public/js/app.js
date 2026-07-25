@@ -718,10 +718,34 @@
     return `<a href="${esc(url)}" target="_blank" rel="noopener">查看貼文</a>`;
   }
 
+  // 內文格左側附縮圖（若有）：僅接受 https:// 開頭網址，esc() 過後才組入 src，
+  // 與 postLinkHtml 相同的防護原則。縮圖來源是 FB CDN，連結可能過期失效，
+  // 壞圖時要隱藏（不留破圖示、不留版面空洞）——用 fb-post-thumb class 掛 JS 監聽器處理
+  // （不用 onerror="" 屬性：CSP 的 script-src-attr 'none' 會擋掉 inline 事件屬性）。
+  function postMessageHtml(message, row) {
+    const text = esc(message);
+    const url = row.thumbnail_url;
+    if (!url || !/^https:\/\//i.test(url)) return text;
+    return `<div class="fb-post-cell">` +
+      `<img class="fb-post-thumb" src="${esc(url)}" alt="" loading="lazy">` +
+      `<span>${text}</span></div>`;
+  }
+
+  // img 的 error 事件不會冒泡，需在祖先節點用 capture phase 監聽；
+  // el 在分頁切換間會重複使用（innerHTML 清空但節點本身不變），故只綁一次。
+  function bindThumbErrorFallback(el) {
+    if (el._thumbErrBound) return;
+    el._thumbErrBound = true;
+    el.addEventListener('error', (e) => {
+      if (e.target?.classList?.contains('fb-post-thumb')) e.target.style.display = 'none';
+    }, true);
+  }
+
   function renderFbPosts() {
     const el = $('#page-fb_posts');
     if (!hasKeys('fb_posts')) return renderNoPermission(el);
     el.innerHTML = '';
+    bindThumbErrorFallback(el);
     const postRows = state.data.fb_posts.map(p => ({
       ...p, created_at: taipeiDate(p.created_at),
     }));
@@ -730,7 +754,7 @@
       rows: postRows,
       columns: [
         { key: 'created_at', label: '日期' },
-        { key: 'message', label: '內容' },
+        { key: 'message', label: '內容', format: postMessageHtml, html: true },
         { key: 'reach', label: '觀看', num: true, format: num },
         { key: 'likes', label: '反應', num: true, format: num },
         { key: 'comments', label: '留言', num: true, format: num },

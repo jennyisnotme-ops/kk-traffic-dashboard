@@ -37,6 +37,13 @@ function normalizePermalink(url) {
   return null;
 }
 
+// full_picture：Graph API 回傳該貼文的代表圖（相片貼文=相片、影片貼文=縮圖、
+// 連結貼文=連結預覽圖），單一欄位即可涵蓋所有貼文類型，不需分照片/影片邏輯。
+// 純文字貼文沒有圖，欄位會缺失，需正規化為 null（不可讓 undefined 流進 SQL 參數）。
+function normalizeThumbnail(url) {
+  return (typeof url === 'string' && url) ? url : null;
+}
+
 function postsToRows(data) {
   return (data || []).map(p => {
     const ins = {};
@@ -51,6 +58,7 @@ function postsToRows(data) {
       comments: Number(act.comment) || 0,
       shares: Number(act.share) || 0,
       permalink_url: normalizePermalink(p.permalink_url),
+      thumbnail_url: normalizeThumbnail(p.full_picture),
     };
   });
 }
@@ -86,21 +94,21 @@ async function fetchFbPage(pool, from, to) {
 
   // 3) 近 25 篇貼文成效（UPSERT，成效持續更新）
   const posts = await fbGet(`${pageId}/posts`, {
-    fields: 'id,created_time,message,permalink_url,' +
+    fields: 'id,created_time,message,permalink_url,full_picture,' +
             'insights.metric(post_media_view,post_activity_by_action_type)',
     limit: 25,
   }, token);
   const rows = postsToRows(posts.data);
   for (const r of rows) {
     await pool.query(
-      `INSERT INTO traf_fb_posts (post_id, created_at, message, reach, likes, comments, shares, permalink_url, fetched_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now())
+      `INSERT INTO traf_fb_posts (post_id, created_at, message, reach, likes, comments, shares, permalink_url, thumbnail_url, fetched_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now())
        ON CONFLICT (post_id) DO UPDATE
-         SET message=$3, reach=$4, likes=$5, comments=$6, shares=$7, permalink_url=$8, fetched_at=now()`,
-      [r.post_id, r.created_at, r.message, r.reach, r.likes, r.comments, r.shares, r.permalink_url]);
+         SET message=$3, reach=$4, likes=$5, comments=$6, shares=$7, permalink_url=$8, thumbnail_url=$9, fetched_at=now()`,
+      [r.post_id, r.created_at, r.message, r.reach, r.likes, r.comments, r.shares, r.permalink_url, r.thumbnail_url]);
   }
 
   return { daily: daily.length, posts: rows.length };
 }
 
-module.exports = { fetchFbPage, insightsToDaily, postsToRows, normalizePermalink };
+module.exports = { fetchFbPage, insightsToDaily, postsToRows, normalizePermalink, normalizeThumbnail };
