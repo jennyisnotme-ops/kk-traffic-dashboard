@@ -1174,9 +1174,16 @@
       <p id="settings-theme-error" class="form-error"></p>
       <p id="settings-theme-success" class="form-success"></p>
       <div id="theme-swatches" class="theme-swatches">${swatches}</div>
-      <label class="theme-custom">自訂顏色
-        <input type="color" id="theme-custom-color" value="${esc(previewPrimary)}">
-      </label>
+      <div class="theme-custom">
+        <div class="theme-custom-label">
+          <span class="theme-custom-title">🎨 自訂顏色</span>
+          <span class="theme-custom-hint">十色都不喜歡？點色塊自由調色</span>
+        </div>
+        <label class="theme-custom-picker">
+          <input type="color" id="theme-custom-color" value="${esc(previewPrimary)}">
+          <span class="theme-custom-code" id="theme-custom-code">${esc(previewPrimary.toUpperCase())}</span>
+        </label>
+      </div>
       <button type="button" id="theme-save-btn">儲存</button>
     </div>`;
 
@@ -1195,6 +1202,7 @@
           mark.remove();
         }
       });
+      $('#theme-custom-code').textContent = previewPrimary.toUpperCase();
     }
     markActive();
 

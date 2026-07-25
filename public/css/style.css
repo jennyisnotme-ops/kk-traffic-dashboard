@@ -176,9 +176,18 @@ main { padding: 20px; }
 .theme-swatch.active { border-color: var(--c-text); box-shadow: 0 0 0 2px var(--c-card), 0 0 0 4px var(--c-text); }
 .theme-swatch-name { display: block; }
 .theme-swatch-current { display: block; font-size: 10px; margin-top: 2px; opacity: .9; }
-.theme-custom { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-.theme-custom input[type="color"] { width: 40px; height: 30px; border: 1px solid var(--c-border);
-  border-radius: 6px; padding: 0; cursor: pointer; }
+.theme-custom { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 14px 16px; margin-top: 4px; background: var(--c-bg); border: 1px dashed var(--c-border);
+  border-radius: 10px; }
+.theme-custom-label { display: flex; flex-direction: column; gap: 2px; }
+.theme-custom-title { font-size: 14px; font-weight: bold; color: var(--c-text); }
+.theme-custom-hint { font-size: 12px; color: var(--c-text-muted); }
+.theme-custom-picker { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.theme-custom-picker input[type="color"] { width: 56px; height: 44px; border: 2px solid var(--c-border);
+  border-radius: 8px; padding: 0; cursor: pointer; transition: border-color .15s; }
+.theme-custom-picker:hover input[type="color"] { border-color: var(--c-primary); }
+.theme-custom-code { font-size: 13px; font-family: ui-monospace, monospace; color: var(--c-text-soft);
+  letter-spacing: .03em; min-width: 64px; }
 #theme-save-btn { padding: 8px 16px; border: 0; border-radius: 8px; background: var(--c-primary);
   color: var(--c-on-primary); cursor: pointer; align-self: flex-start; }
 
