@@ -112,3 +112,16 @@ CREATE TABLE IF NOT EXISTS traf_layouts (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (scope)
 );
+
+-- 每日 Discord 摘要設定（全域單列，非每帳號一份）
+CREATE TABLE IF NOT EXISTS traf_daily_digest (
+  id           SERIAL PRIMARY KEY,
+  enabled      BOOLEAN NOT NULL DEFAULT false,
+  webhook_url  TEXT,
+  report_id    INT REFERENCES traf_reports(id) ON DELETE SET NULL,
+  last_sent_at TIMESTAMPTZ,
+  last_status  TEXT,
+  last_error   TEXT,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO traf_daily_digest (id) VALUES (1) ON CONFLICT (id) DO NOTHING;

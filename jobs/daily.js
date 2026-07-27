@@ -4,6 +4,9 @@ const { fetchGa } = require('../fetchers/ga');
 const { fetchFbPage } = require('../fetchers/fb_page');
 const { fetchAds } = require('../fetchers/ads');
 const { taipeiToday, addDays } = require('../lib/dates');
+const { computeReportSeries } = require('../lib/report_series');
+const { renderChartPng } = require('../lib/chart_render');
+const { sendDigest } = require('../lib/discord');
 
 const SOURCES = [
   ['ga', fetchGa, 3],
@@ -57,6 +60,7 @@ function scheduleDaily(pool) {
       // 注意：若 08:00 當下剛好有手動重抓/回補在跑，runAll 會擲出「抓取已在執行中」，
       // 此處 catch 會記錄 console.error 並跳過本次排程，屬可接受的行為（不重試、不中斷 process）
       await runAll(pool);
+      await runDigestOnce(pool);
     } catch (err) {
       // 排程路徑不可洩漏 unhandled rejection
       console.error('[cron] 每日抓取失敗:', err);
@@ -94,4 +98,45 @@ async function backfill(pool) {
   }
 }
 
-module.exports = { runAll, scheduleDaily, backfill };
+// 每日摘要：獨立於三個資料來源之外的第四步驟，任何失敗都不影響資料抓取本身
+// override 非 null 時忽略 DB 的 enabled，用於「測試發送」（見 server.js）
+async function runDigestOnce(pool, override = null) {
+  try {
+    let settings;
+    if (override) {
+      settings = { webhook_url: override.webhook_url, report_id: override.report_id };
+    } else {
+      const { rows } = await pool.query('SELECT * FROM traf_daily_digest WHERE id = 1');
+      settings = rows[0];
+      if (!settings || !settings.enabled) return { ok: true, skipped: true };
+    }
+    if (!settings.webhook_url || !settings.report_id) return { ok: true, skipped: true };
+
+    const { rows: reportRows } = await pool.query('SELECT * FROM traf_reports WHERE id = $1', [settings.report_id]);
+    const report = reportRows[0];
+    if (!report) throw new Error('指定的自訂報表已不存在');
+
+    const to = addDays(taipeiToday(), -1);
+    const from = addDays(to, -29);
+    const { labels, series } = await computeReportSeries(pool, report.config, from, to);
+    const imageBuffer = await renderChartPng({ type: report.config.type, labels, series });
+    await sendDigest(settings.webhook_url, { title: `${report.name}（${from} ~ ${to}）`, imageBuffer });
+
+    if (!override) {
+      await pool.query(
+        `UPDATE traf_daily_digest SET last_sent_at = now(), last_status = 'ok', last_error = NULL WHERE id = 1`);
+    }
+    return { ok: true };
+  } catch (err) {
+    const msg = err?.message || String(err);
+    console.error('[digest]', msg);
+    if (!override) {
+      await pool.query(
+        `UPDATE traf_daily_digest SET last_sent_at = now(), last_status = 'error', last_error = $1 WHERE id = 1`,
+        [msg.slice(0, 500)]).catch(e => console.error('[digest] 寫入狀態失敗:', e.message));
+    }
+    return { ok: false, error: msg };
+  }
+}
+
+module.exports = { runAll, scheduleDaily, backfill, runDigestOnce };
