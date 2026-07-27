@@ -3,7 +3,7 @@ FROM node:20-alpine
 WORKDIR /app
 
 COPY package*.json ./
-RUN apk add --no-cache build-base g++ cairo-dev pango-dev giflib-dev \
+RUN apk add --no-cache build-base g++ cairo-dev pango-dev giflib-dev pkgconfig python3 \
   && npm ci --omit=dev
 
 COPY . .
