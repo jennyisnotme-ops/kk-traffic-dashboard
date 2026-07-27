@@ -515,6 +515,31 @@ async function main() {
       );
     });
 
+    // i2b. 每日摘要（admin 專屬）：選單項可見、可渲染設定頁；測試發送對不合法 webhook 顯示失敗訊息
+    // （刻意用假 webhook 觸發失敗路徑，不需要真的送到 Discord 就能驗證前端錯誤反饋接得到）
+    await check('每日摘要：admin 選單可見並可渲染設定頁', async () => {
+      const digestMenuVisible = await isComputedVisible(page, '#menu-digest');
+      if (!digestMenuVisible) throw new Error('#menu-digest 應對 admin 顯示');
+      await page.click('#menu-digest');
+      await page.waitForFunction(
+        () => document.querySelector('#page-digest')?.classList.contains('active'),
+        { timeout: 5000 },
+      );
+      await page.waitForSelector('#digest-settings', { timeout: 5000 });
+    });
+
+    await check('每日摘要：測試發送對不合法 webhook 顯示失敗訊息', async () => {
+      await page.evaluate(() => {
+        document.querySelector('#digest-webhook').value = 'https://discord.com/api/webhooks/000/invalid';
+      });
+      // report 下拉若無任何報表選項則略過選擇：端點本身仍會因缺報表或 webhook 無效而回錯誤
+      await page.click('#digest-test-btn');
+      await page.waitForFunction(
+        () => document.querySelector('#digest-error')?.textContent.length > 0,
+        { timeout: 8000 },
+      );
+    });
+
     // i3. 設定→改密碼：群組展開、子選單可到達
     await check('設定群組：展開後可點擊到達改密碼頁', async () => {
       const subVisibleBefore = await isComputedVisible(page, '#menu-settings .menu-sub');

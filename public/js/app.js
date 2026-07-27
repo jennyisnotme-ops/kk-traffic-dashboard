@@ -114,7 +114,7 @@
     // 「帳號管理」與「設定」子頁不受 allowed_pages 限制：帳號管理只看 role==='admin'，
     // 設定頁（改密碼/外觀主題）任何已登入使用者皆可見，故一律加進 Sidebar 的合法頁面清單，
     // 讓 sidebar.js 的 navigate() 不會因為不在 pageSet 而擋掉點擊。
-    const extraPages = SETTINGS_PAGES.concat(isAdmin() ? ['users'] : []);
+    const extraPages = SETTINGS_PAGES.concat(isAdmin() ? ['users', 'digest'] : []);
     Sidebar.init({ pages: PAGES.filter(p => allowed.has(p)).concat(extraPages), onNavigate: onNavigatePage });
     try { await loadReports(); } catch (_) { state.reports = []; }
     load();
@@ -127,6 +127,7 @@
     const isUser = state.me?.role === 'user';
     $('#refetch-btn').hidden = isUser;
     $('#menu-users').hidden = !isAdmin();
+    $('#menu-digest').hidden = !isAdmin();
   }
 
   function onNavigatePage(page) {
@@ -137,6 +138,7 @@
       themePreviewDirty = false;
     }
     if (page === 'users') renderUsers();
+    else if (page === 'digest') renderDigestSettings();
     else if (page === 'settings_password') renderSettingsPassword();
     else if (page === 'settings_theme') renderSettingsTheme();
   }
@@ -1146,6 +1148,76 @@
         $('#reset-pw-error').textContent = err.message;
       }
     };
+  }
+
+  // ── 每日摘要（admin-only）─────────────────────────
+  async function renderDigestSettings() {
+    const el = $('#page-digest');
+    if (!isAdmin()) return renderNoPermission(el);
+    el.innerHTML = '<p>載入中…</p>';
+    let settings;
+    try { settings = (await api('/api/digest-settings')).settings; }
+    catch (err) { el.innerHTML = `<p class="form-error">${esc(err.message)}</p>`; return; }
+    renderDigestForm(settings);
+  }
+
+  // 純渲染 + 綁定，不重新打 API：儲存成功後直接用 PUT 回傳的最新 settings 呼叫本函式重繪，
+  // 避免像 renderDigestSettings() 那樣再打一次 GET、把剛顯示的「已儲存」訊息在重繪時洗掉
+  function renderDigestForm(settings) {
+    const el = $('#page-digest');
+    const reportOptions = (state.reports || []).map(r =>
+      `<option value="${r.id}" ${r.id === settings.report_id ? 'selected' : ''}>${esc(r.name)}</option>`
+    ).join('');
+
+    el.innerHTML = `<div id="digest-settings">
+      <h3>每日摘要</h3>
+      <p class="theme-custom-hint">每天在資料抓取完成後，把指定報表近 30 天趨勢畫成圖片發到 Discord</p>
+      <p id="digest-error" class="form-error"></p>
+      <p id="digest-success" class="form-success"></p>
+      <label><input type="checkbox" id="digest-enabled" ${settings.enabled ? 'checked' : ''}> 啟用每日發送</label>
+      <label>選擇報表
+        <select id="digest-report"><option value="">— 請選擇 —</option>${reportOptions}</select>
+      </label>
+      <label>Discord webhook 網址
+        <input type="text" id="digest-webhook" placeholder="https://discord.com/api/webhooks/..."
+               value="${esc(settings.webhook_url || '')}">
+      </label>
+      <div id="digest-status">${settings.last_sent_at
+        ? `最後發送：${esc(new Date(settings.last_sent_at).toLocaleString('zh-TW'))}（${
+            settings.last_status === 'ok' ? '成功' : `失敗：${esc(settings.last_error || '')}`})`
+        : '尚未發送過'}</div>
+      <div id="digest-actions">
+        <button type="button" id="digest-test-btn">測試發送</button>
+        <button type="button" id="digest-save-btn">儲存</button>
+      </div>
+    </div>`;
+
+    function currentPayload() {
+      const report_id = $('#digest-report').value ? Number($('#digest-report').value) : null;
+      return { enabled: $('#digest-enabled').checked, webhook_url: $('#digest-webhook').value.trim() || null, report_id };
+    }
+
+    $('#digest-test-btn').addEventListener('click', async () => {
+      $('#digest-error').textContent = ''; $('#digest-success').textContent = '';
+      // 刻意讀取「目前表單上的值」而非上次已存檔的 settings：admin 應該能在儲存前先測試
+      const { webhook_url, report_id } = currentPayload();
+      if (!webhook_url || !report_id) { $('#digest-error').textContent = '請先填寫 webhook 網址並選擇報表'; return; }
+      $('#digest-test-btn').disabled = true;
+      try {
+        await api('/api/digest-settings/test', { method: 'POST', body: JSON.stringify({ webhook_url, report_id }) });
+        $('#digest-success').textContent = '測試訊息已送出，請到 Discord 頻道確認';
+      } catch (err) { $('#digest-error').textContent = `測試失敗：${err.message}`; }
+      $('#digest-test-btn').disabled = false;
+    });
+
+    $('#digest-save-btn').addEventListener('click', async () => {
+      $('#digest-error').textContent = ''; $('#digest-success').textContent = '';
+      try {
+        const saved = (await api('/api/digest-settings', { method: 'PUT', body: JSON.stringify(currentPayload()) })).settings;
+        renderDigestForm(saved);
+        $('#digest-success').textContent = '已儲存';
+      } catch (err) { $('#digest-error').textContent = `儲存失敗：${err.message}`; }
+    });
   }
 
   // ── 設定：改密碼 ─────────────────────────────────
