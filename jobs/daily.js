@@ -5,7 +5,7 @@ const { fetchFbPage } = require('../fetchers/fb_page');
 const { fetchAds } = require('../fetchers/ads');
 const { taipeiToday, addDays } = require('../lib/dates');
 const { computeReportSeries } = require('../lib/report_series');
-const { renderChartPng } = require('../lib/chart_render');
+const { renderDigestPng } = require('../lib/chart_render');
 const { sendDigest } = require('../lib/discord');
 
 const SOURCES = [
@@ -99,42 +99,57 @@ async function backfill(pool) {
 }
 
 // 每日摘要：獨立於三個資料來源之外的第四步驟，任何失敗都不影響資料抓取本身
-// override 非 null 時忽略 DB 的 enabled，用於「測試發送」（見 server.js）
+// override 非 null 時忽略 DB 的 enabled 報表清單，改用呼叫端指定的 report_ids，用於「測試發送」（見 server.js）
+// 可勾選多份報表：每份各自算圖、各自發一則 Discord 訊息、各自成敗互不影響（見本函式內的 for 迴圈）
 async function runDigestOnce(pool, override = null) {
+  const results = [];
   try {
-    let settings;
+    let webhookUrl, entries;
     if (override) {
-      settings = { webhook_url: override.webhook_url, report_id: override.report_id };
+      webhookUrl = override.webhook_url;
+      entries = (override.report_ids || []).map(id => ({ report_id: id }));
     } else {
-      const { rows } = await pool.query('SELECT * FROM traf_daily_digest WHERE id = 1');
-      settings = rows[0];
-      if (!settings || !settings.enabled) return { ok: true, skipped: true };
+      const { rows: cfgRows } = await pool.query('SELECT webhook_url FROM traf_daily_digest WHERE id = 1');
+      webhookUrl = cfgRows[0]?.webhook_url;
+      if (!webhookUrl) return { ok: true, skipped: true };
+      const { rows } = await pool.query('SELECT report_id FROM traf_digest_reports WHERE enabled = true');
+      entries = rows;
     }
-    if (!settings.webhook_url || !settings.report_id) return { ok: true, skipped: true };
-
-    const { rows: reportRows } = await pool.query('SELECT * FROM traf_reports WHERE id = $1', [settings.report_id]);
-    const report = reportRows[0];
-    if (!report) throw new Error('指定的自訂報表已不存在');
+    if (!webhookUrl || !entries.length) return { ok: true, skipped: true };
 
     const to = addDays(taipeiToday(), -1);
     const from = addDays(to, -29);
-    const { labels, series } = await computeReportSeries(pool, report.config, from, to);
-    const imageBuffer = await renderChartPng({ type: report.config.type, labels, series });
-    await sendDigest(settings.webhook_url, { title: `${report.name}（${from} ~ ${to}）`, imageBuffer });
 
-    if (!override) {
-      await pool.query(
-        `UPDATE traf_daily_digest SET last_sent_at = now(), last_status = 'ok', last_error = NULL WHERE id = 1`);
+    for (const entry of entries) {
+      try {
+        const { rows: reportRows } = await pool.query('SELECT * FROM traf_reports WHERE id = $1', [entry.report_id]);
+        const report = reportRows[0];
+        if (!report) throw new Error('指定的自訂報表已不存在');
+        const { labels, series } = await computeReportSeries(pool, report.config, from, to);
+        const imageBuffer = await renderDigestPng({ type: report.config.type, labels, series });
+        await sendDigest(webhookUrl, { title: `${report.name}（${from} ~ ${to}）`, imageBuffer });
+        if (!override) {
+          await pool.query(
+            `UPDATE traf_digest_reports SET last_sent_at = now(), last_status = 'ok', last_error = NULL WHERE report_id = $1`,
+            [entry.report_id]);
+        }
+        results.push({ report_id: entry.report_id, ok: true });
+      } catch (err) {
+        const msg = err?.message || String(err);
+        console.error('[digest]', entry.report_id, msg);
+        if (!override) {
+          await pool.query(
+            `UPDATE traf_digest_reports SET last_sent_at = now(), last_status = 'error', last_error = $1 WHERE report_id = $2`,
+            [msg.slice(0, 500), entry.report_id]).catch(e => console.error('[digest] 寫入狀態失敗:', e.message));
+        }
+        results.push({ report_id: entry.report_id, ok: false, error: msg });
+      }
     }
-    return { ok: true };
+    return { ok: true, results };
   } catch (err) {
+    // 理論上不會走到這裡（上面每筆報表已各自 try/catch）；保留最外層防線避免任何未預期例外外洩到呼叫端
     const msg = err?.message || String(err);
     console.error('[digest]', msg);
-    if (!override) {
-      await pool.query(
-        `UPDATE traf_daily_digest SET last_sent_at = now(), last_status = 'error', last_error = $1 WHERE id = 1`,
-        [msg.slice(0, 500)]).catch(e => console.error('[digest] 寫入狀態失敗:', e.message));
-    }
     return { ok: false, error: msg };
   }
 }

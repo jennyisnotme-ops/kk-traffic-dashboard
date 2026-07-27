@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { validateExportPayload, validateReportConfig, validateNewUser, validateLayoutCards, validateThemeColor } = require('../lib/validators');
+const { validateExportPayload, validateReportConfig, validateNewUser, validateLayoutCards, validateThemeColor,
+  validateDigestSettings } = require('../lib/validators');
 
 test('validateExportPayload 接受合法 payload', () => {
   assert.deepEqual(
@@ -129,4 +130,61 @@ test('validateThemeColor 拒絕非字串', () => {
   assert.equal(validateThemeColor(null).ok, false);
   assert.equal(validateThemeColor(undefined).ok, false);
   assert.equal(validateThemeColor(123456).ok, false);
+});
+
+// validateDigestSettings — payload 形狀改為 { webhook_url, reports: [{report_id, enabled}, ...] }
+// webhook 全域共用一組，reports 是可勾選多份的清單（Digest-multi）
+test('validateDigestSettings 接受合法 payload（多份報表，部分勾選）', () => {
+  assert.deepEqual(validateDigestSettings({
+    webhook_url: 'https://discord.com/api/webhooks/123456789012345678/abcDEF_-123',
+    reports: [{ report_id: 1, enabled: true }, { report_id: 2, enabled: false }],
+  }), { ok: true });
+});
+
+test('validateDigestSettings 接受全部未勾選且 webhook_url 為 null', () => {
+  assert.deepEqual(validateDigestSettings({
+    webhook_url: null,
+    reports: [{ report_id: 1, enabled: false }, { report_id: 2, enabled: false }],
+  }), { ok: true });
+});
+
+test('validateDigestSettings 接受空 reports 陣列（尚無自訂報表可選）', () => {
+  assert.deepEqual(validateDigestSettings({ webhook_url: null, reports: [] }), { ok: true });
+});
+
+test('validateDigestSettings 拒絕非物件 payload', () => {
+  assert.equal(validateDigestSettings(null).ok, false);
+  assert.equal(validateDigestSettings('x').ok, false);
+});
+
+test('validateDigestSettings 拒絕不合法的 webhook_url 格式', () => {
+  assert.equal(validateDigestSettings({
+    webhook_url: 'https://evil.example.com/hook',
+    reports: [{ report_id: 1, enabled: false }],
+  }).ok, false);
+});
+
+test('validateDigestSettings 拒絕 reports 非陣列', () => {
+  assert.equal(validateDigestSettings({ webhook_url: null, reports: null }).ok, false);
+  assert.equal(validateDigestSettings({ webhook_url: null }).ok, false);
+});
+
+test('validateDigestSettings 拒絕 reports 內項目缺 report_id 或 enabled 型別錯誤', () => {
+  assert.equal(validateDigestSettings({ webhook_url: null, reports: [{ enabled: true }] }).ok, false);
+  assert.equal(validateDigestSettings({ webhook_url: null, reports: [{ report_id: 'x', enabled: true }] }).ok, false);
+  assert.equal(validateDigestSettings({ webhook_url: null, reports: [{ report_id: 1, enabled: 'yes' }] }).ok, false);
+});
+
+test('validateDigestSettings 有勾選啟用的報表時 webhook_url 為必填且需合法', () => {
+  assert.equal(validateDigestSettings({
+    webhook_url: null,
+    reports: [{ report_id: 1, enabled: true }],
+  }).ok, false);
+  assert.equal(validateDigestSettings({
+    reports: [{ report_id: 1, enabled: true }],
+  }).ok, false);
+  assert.equal(validateDigestSettings({
+    webhook_url: 'not-a-url',
+    reports: [{ report_id: 1, enabled: true }],
+  }).ok, false);
 });

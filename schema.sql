@@ -113,15 +113,39 @@ CREATE TABLE IF NOT EXISTS traf_layouts (
   UNIQUE (scope)
 );
 
--- 每日 Discord 摘要設定（全域單列，非每帳號一份）
+-- 每日 Discord 摘要設定：webhook 全域共用一組（單列），可勾選多份報表各自獨立啟用/發送狀態
 CREATE TABLE IF NOT EXISTS traf_daily_digest (
   id           SERIAL PRIMARY KEY,
-  enabled      BOOLEAN NOT NULL DEFAULT false,
   webhook_url  TEXT,
-  report_id    INT REFERENCES traf_reports(id) ON DELETE SET NULL,
-  last_sent_at TIMESTAMPTZ,
-  last_status  TEXT,
-  last_error   TEXT,
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 INSERT INTO traf_daily_digest (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS traf_digest_reports (
+  id           SERIAL PRIMARY KEY,
+  report_id    INT NOT NULL REFERENCES traf_reports(id) ON DELETE CASCADE,
+  enabled      BOOLEAN NOT NULL DEFAULT true,
+  last_sent_at TIMESTAMPTZ,
+  last_status  TEXT,
+  last_error   TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (report_id)
+);
+
+-- 一次性遷移：把舊版單列設定（enabled/report_id）搬進新表，並移除舊欄位。
+-- 只在舊欄位還存在時執行（第一次開機後舊欄位就沒了），確保重複開機不會出錯或重複搬移。
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_name = 'traf_daily_digest' AND column_name = 'report_id') THEN
+    INSERT INTO traf_digest_reports (report_id, enabled)
+    SELECT report_id, enabled FROM traf_daily_digest
+    WHERE id = 1 AND report_id IS NOT NULL
+    ON CONFLICT (report_id) DO NOTHING;
+    ALTER TABLE traf_daily_digest DROP COLUMN IF EXISTS enabled;
+    ALTER TABLE traf_daily_digest DROP COLUMN IF EXISTS report_id;
+    ALTER TABLE traf_daily_digest DROP COLUMN IF EXISTS last_sent_at;
+    ALTER TABLE traf_daily_digest DROP COLUMN IF EXISTS last_status;
+    ALTER TABLE traf_daily_digest DROP COLUMN IF EXISTS last_error;
+  END IF;
+END $$;

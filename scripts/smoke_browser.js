@@ -715,9 +715,12 @@ async function main() {
       );
     });
 
-    // i2b. 每日摘要（admin 專屬）：選單項可見、可渲染設定頁；測試發送對不合法 webhook 顯示失敗訊息
-    // （刻意用假 webhook 觸發失敗路徑，不需要真的送到 Discord 就能驗證前端錯誤反饋接得到）
-    await check('每日摘要：admin 選單可見並可渲染設定頁', async () => {
+    // i2b. 每日摘要（admin 專屬，Digest-multi）：選單項可見、可渲染「多份報表勾選清單」設定頁；
+    // 測試發送對格式不合法的 webhook 顯示前端驗證錯誤；勾選多份報表後對「格式合法但不存在」的 webhook
+    // 測試發送，驗證後端 runDigestOnce 對每份報表各自成敗、前端組出「N 則成功，M 則失敗」的彙總文字。
+    // 全程只打 /api/digest-settings/test（override 模式，不寫入 traf_digest_reports），
+    // 刻意不點 #digest-save-btn，避免覆寫正式環境已設定的真實 webhook_url / 報表勾選狀態。
+    await check('每日摘要：admin 選單可見並可渲染報表勾選清單設定頁', async () => {
       const digestMenuVisible = await isComputedVisible(page, '#menu-digest');
       if (!digestMenuVisible) throw new Error('#menu-digest 應對 admin 顯示');
       await page.click('#menu-digest');
@@ -726,18 +729,47 @@ async function main() {
         { timeout: 5000 },
       );
       await page.waitForSelector('#digest-settings', { timeout: 5000 });
+      // 新版 UI 不再有單一 <select id="digest-report">，改成每份報表一個 checkbox
+      const hasOldDropdown = await page.$('#digest-report');
+      if (hasOldDropdown) throw new Error('#digest-report 舊版下拉選單不應存在，應已改為 checkbox 清單');
     });
 
-    await check('每日摘要：測試發送對不合法 webhook 顯示失敗訊息', async () => {
+    await check('每日摘要：測試發送對格式不合法的 webhook 顯示前端驗證錯誤', async () => {
       await page.evaluate(() => {
-        document.querySelector('#digest-webhook').value = 'https://discord.com/api/webhooks/000/invalid';
+        document.querySelector('#digest-webhook').value = 'https://not-discord.example.com/hook';
+        document.querySelectorAll('.digest-report-cb').forEach(cb => { cb.checked = false; });
       });
-      // report 下拉若無任何報表選項則略過選擇：端點本身仍會因缺報表或 webhook 無效而回錯誤
       await page.click('#digest-test-btn');
       await page.waitForFunction(
         () => document.querySelector('#digest-error')?.textContent.length > 0,
         { timeout: 8000 },
       );
+      const errText = await page.$eval('#digest-error', el => el.textContent);
+      if (!errText.includes('webhook') && !errText.includes('勾選'))
+        throw new Error(`預期前端驗證錯誤訊息，實際："${errText}"`);
+    });
+
+    await check('每日摘要：勾選多份報表後測試發送，顯示各報表獨立成敗的彙總文字', async () => {
+      const cbCount = await page.$$eval('.digest-report-cb', els => els.length);
+      if (cbCount < 1) throw new Error('正式環境目前應至少有 1 份自訂報表可勾選，實際 0 份');
+      await page.evaluate(() => {
+        // 格式合法（通過 DISCORD_WEBHOOK_RE）但 webhook id 不存在 → 後端會真的打一次 Discord，
+        // 收到 404/401 後在 runDigestOnce 內被該筆報表的 try/catch 接住，不會真的送出任何訊息
+        document.querySelector('#digest-webhook').value =
+          'https://discord.com/api/webhooks/123456789012345678/fake-nonexistent-webhook-id-for-smoke-test';
+        document.querySelectorAll('.digest-report-cb').forEach(cb => { cb.checked = true; });
+      });
+      await page.click('#digest-test-btn');
+      await page.waitForFunction(
+        () => {
+          const t = document.querySelector('#digest-success')?.textContent || '';
+          return /則成功|則失敗/.test(t);
+        },
+        { timeout: 15000 },
+      );
+      const summary = await page.$eval('#digest-success', el => el.textContent);
+      if (!/則成功.*則失敗/.test(summary))
+        throw new Error(`預期「N 則成功，M 則失敗」彙總文字，實際："${summary}"`);
     });
 
     // i3. 設定→改密碼：群組展開、子選單可到達

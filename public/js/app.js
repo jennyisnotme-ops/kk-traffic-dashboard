@@ -1218,37 +1218,36 @@
     const el = $('#page-digest');
     if (!isAdmin()) return renderNoPermission(el);
     el.innerHTML = '<p>載入中…</p>';
-    let settings;
-    try { settings = (await api('/api/digest-settings')).settings; }
+    let data;
+    try { data = await api('/api/digest-settings'); }
     catch (err) { el.innerHTML = `<p class="form-error">${esc(err.message)}</p>`; return; }
-    renderDigestForm(settings);
+    renderDigestForm(data);
   }
 
-  // 純渲染 + 綁定，不重新打 API：儲存成功後直接用 PUT 回傳的最新 settings 呼叫本函式重繪，
+  // 純渲染 + 綁定，不重新打 API：儲存成功後直接用 PUT 回傳的最新資料呼叫本函式重繪，
   // 避免像 renderDigestSettings() 那樣再打一次 GET、把剛顯示的「已儲存」訊息在重繪時洗掉
-  function renderDigestForm(settings) {
+  function renderDigestForm(data) {
     const el = $('#page-digest');
-    const reportOptions = (state.reports || []).map(r =>
-      `<option value="${r.id}" ${r.id === settings.report_id ? 'selected' : ''}>${esc(r.name)}</option>`
-    ).join('');
+    const rows = (data.reports || []).map(r => `
+      <label class="digest-report-row">
+        <input type="checkbox" class="digest-report-cb" value="${r.report_id}" ${r.enabled ? 'checked' : ''}>
+        <span>${esc(r.name)}</span>
+        <span class="digest-report-status">${r.last_sent_at
+          ? `最後：${esc(new Date(r.last_sent_at).toLocaleString('zh-TW'))}（${
+              r.last_status === 'ok' ? '成功' : `失敗：${esc(r.last_error || '')}`})`
+          : '尚未發送過'}</span>
+      </label>`).join('');
 
     el.innerHTML = `<div id="digest-settings">
       <h3>每日摘要</h3>
-      <p class="theme-custom-hint">每天在資料抓取完成後，把指定報表近 30 天趨勢畫成圖片發到 Discord</p>
+      <p class="theme-custom-hint">每天在資料抓取完成後，把勾選的報表近 30 天趨勢各自畫成圖片，分開發到同一個 Discord 頻道</p>
       <p id="digest-error" class="form-error"></p>
       <p id="digest-success" class="form-success"></p>
-      <label><input type="checkbox" id="digest-enabled" ${settings.enabled ? 'checked' : ''}> 啟用每日發送</label>
-      <label>選擇報表
-        <select id="digest-report"><option value="">— 請選擇 —</option>${reportOptions}</select>
-      </label>
       <label>Discord webhook 網址
         <input type="text" id="digest-webhook" placeholder="https://discord.com/api/webhooks/..."
-               value="${esc(settings.webhook_url || '')}">
+               value="${esc(data.webhook_url || '')}">
       </label>
-      <div id="digest-status">${settings.last_sent_at
-        ? `最後發送：${esc(new Date(settings.last_sent_at).toLocaleString('zh-TW'))}（${
-            settings.last_status === 'ok' ? '成功' : `失敗：${esc(settings.last_error || '')}`})`
-        : '尚未發送過'}</div>
+      <div id="digest-report-list">${rows || '<p>尚無自訂報表可選</p>'}</div>
       <div id="digest-actions">
         <button type="button" id="digest-test-btn">測試發送</button>
         <button type="button" id="digest-save-btn">儲存</button>
@@ -1256,19 +1255,28 @@
     </div>`;
 
     function currentPayload() {
-      const report_id = $('#digest-report').value ? Number($('#digest-report').value) : null;
-      return { enabled: $('#digest-enabled').checked, webhook_url: $('#digest-webhook').value.trim() || null, report_id };
+      const webhook_url = $('#digest-webhook').value.trim() || null;
+      const reports = [...document.querySelectorAll('.digest-report-cb')].map(cb => ({
+        report_id: Number(cb.value), enabled: cb.checked,
+      }));
+      return { webhook_url, reports };
     }
 
     $('#digest-test-btn').addEventListener('click', async () => {
       $('#digest-error').textContent = ''; $('#digest-success').textContent = '';
-      // 刻意讀取「目前表單上的值」而非上次已存檔的 settings：admin 應該能在儲存前先測試
-      const { webhook_url, report_id } = currentPayload();
-      if (!webhook_url || !report_id) { $('#digest-error').textContent = '請先填寫 webhook 網址並選擇報表'; return; }
+      const { webhook_url, reports } = currentPayload();
+      const report_ids = reports.filter(r => r.enabled).map(r => r.report_id);
+      if (!webhook_url || !report_ids.length) {
+        $('#digest-error').textContent = '請先填寫 webhook 網址並至少勾選一份報表'; return;
+      }
       $('#digest-test-btn').disabled = true;
       try {
-        await api('/api/digest-settings/test', { method: 'POST', body: JSON.stringify({ webhook_url, report_id }) });
-        $('#digest-success').textContent = '測試訊息已送出，請到 Discord 頻道確認';
+        const { results } = await api('/api/digest-settings/test', {
+          method: 'POST', body: JSON.stringify({ webhook_url, report_ids }) });
+        const failed = results.filter(r => !r.ok);
+        $('#digest-success').textContent = failed.length
+          ? `${results.length - failed.length} 則成功，${failed.length} 則失敗：${failed.map(f => f.error).join('；')}`
+          : `${results.length} 則測試訊息已送出，請到 Discord 頻道確認`;
       } catch (err) { $('#digest-error').textContent = `測試失敗：${err.message}`; }
       $('#digest-test-btn').disabled = false;
     });
@@ -1276,7 +1284,7 @@
     $('#digest-save-btn').addEventListener('click', async () => {
       $('#digest-error').textContent = ''; $('#digest-success').textContent = '';
       try {
-        const saved = (await api('/api/digest-settings', { method: 'PUT', body: JSON.stringify(currentPayload()) })).settings;
+        const saved = await api('/api/digest-settings', { method: 'PUT', body: JSON.stringify(currentPayload()) });
         renderDigestForm(saved);
         $('#digest-success').textContent = '已儲存';
       } catch (err) { $('#digest-error').textContent = `儲存失敗：${err.message}`; }

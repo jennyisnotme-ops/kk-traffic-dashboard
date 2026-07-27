@@ -84,7 +84,7 @@ const { findUserByCreds, createSession, destroySession, getToken,
   requireAuth, requireAdmin } = require('./lib/auth');
 const { runAll, scheduleDaily, backfill, runDigestOnce } = require('./jobs/daily');
 const XLSX = require('xlsx');
-const { validateExportPayload, validateReportConfig, validateNewUser, validateLayoutCards, ALL_PAGES, validateThemeColor, validateDigestSettings } = require('./lib/validators');
+const { validateExportPayload, validateReportConfig, validateNewUser, validateLayoutCards, ALL_PAGES, validateThemeColor, validateDigestSettings, DISCORD_WEBHOOK_RE } = require('./lib/validators');
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -351,40 +351,74 @@ app.delete('/api/reports/:id', requireAuth, requireAdmin, async (req, res) => {
   } catch (err) { console.error('[api/reports]', err); res.status(500).json({ error: '伺服器錯誤' }); }
 });
 
-// 每日 Discord 摘要設定（僅 admin）
+// 每日 Discord 摘要設定（僅 admin）：webhook 全域共用一組，reports 是「每份自訂報表的勾選狀態」清單
+async function loadDigestSettings() {
+  const { rows: cfgRows } = await pool.query('SELECT webhook_url FROM traf_daily_digest WHERE id = 1');
+  const { rows: reportRows } = await pool.query(`
+    SELECT r.id AS report_id, r.name,
+           d.enabled, d.last_sent_at, d.last_status, d.last_error
+    FROM traf_reports r
+    LEFT JOIN traf_digest_reports d ON d.report_id = r.id
+    ORDER BY r.name`);
+  return {
+    webhook_url: cfgRows[0]?.webhook_url || null,
+    reports: reportRows.map(r => ({
+      report_id: r.report_id, name: r.name,
+      enabled: r.enabled === true,
+      last_sent_at: r.last_sent_at, last_status: r.last_status, last_error: r.last_error,
+    })),
+  };
+}
+
 app.get('/api/digest-settings', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { rows } = await pool.query('SELECT * FROM traf_daily_digest WHERE id = 1');
-    res.json({ settings: rows[0] });
+    res.json(await loadDigestSettings());
   } catch (err) { console.error('[api/digest-settings]', err); res.status(500).json({ error: '伺服器錯誤' }); }
 });
 
 app.put('/api/digest-settings', requireAuth, requireAdmin, async (req, res) => {
   const v = validateDigestSettings(req.body);
   if (!v.ok) return res.status(400).json({ error: v.error });
-  const { enabled, webhook_url, report_id } = req.body;
+  const { webhook_url, reports } = req.body;
+  const client = await pool.connect();
   try {
-    if (report_id) {
-      const { rowCount } = await pool.query('SELECT 1 FROM traf_reports WHERE id = $1', [report_id]);
-      if (!rowCount) return res.status(400).json({ error: '指定的報表不存在' });
+    await client.query('BEGIN');
+    for (const r of reports) {
+      const { rowCount } = await client.query('SELECT 1 FROM traf_reports WHERE id = $1', [r.report_id]);
+      if (!rowCount) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `報表 ${r.report_id} 不存在` });
+      }
     }
-    const { rows } = await pool.query(
-      `UPDATE traf_daily_digest SET enabled=$1, webhook_url=$2, report_id=$3, updated_at=now()
-        WHERE id = 1 RETURNING *`,
-      [enabled, webhook_url || null, report_id || null]);
-    res.json({ settings: rows[0] });
+    await client.query('UPDATE traf_daily_digest SET webhook_url=$1, updated_at=now() WHERE id=1', [webhook_url || null]);
+    for (const r of reports) {
+      await client.query(`
+        INSERT INTO traf_digest_reports (report_id, enabled) VALUES ($1, $2)
+        ON CONFLICT (report_id) DO UPDATE SET enabled = EXCLUDED.enabled`,
+        [r.report_id, Boolean(r.enabled)]);
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[api/digest-settings]', err); return res.status(500).json({ error: '伺服器錯誤' });
+  } finally { client.release(); }
+
+  // 回傳與 GET 相同形狀的最新狀態，前端存檔後可直接重繪（沿用 Task 5 established 的「不重新打 GET」模式）
+  try {
+    res.json(await loadDigestSettings());
   } catch (err) { console.error('[api/digest-settings]', err); res.status(500).json({ error: '伺服器錯誤' }); }
 });
 
-// 測試發送：override 模式，只跑管線不動 traf_daily_digest（見 jobs/daily.js runDigestOnce）
+// 測試發送：override 模式，每份勾選的報表各自送一則 Discord 訊息，彼此獨立成敗，不動 traf_digest_reports
 app.post('/api/digest-settings/test', requireAuth, requireAdmin, async (req, res) => {
-  const { webhook_url, report_id } = req.body || {};
-  if (typeof webhook_url !== 'string' || !/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\//.test(webhook_url))
+  const { webhook_url, report_ids } = req.body || {};
+  if (typeof webhook_url !== 'string' || !DISCORD_WEBHOOK_RE.test(webhook_url))
     return res.status(400).json({ error: 'webhook_url 格式不合法' });
-  if (!Number.isInteger(report_id)) return res.status(400).json({ error: '請先選擇一份報表' });
-  const result = await runDigestOnce(pool, { webhook_url, report_id });
+  if (!Array.isArray(report_ids) || !report_ids.length || !report_ids.every(Number.isInteger))
+    return res.status(400).json({ error: '請至少勾選一份報表' });
+  const result = await runDigestOnce(pool, { webhook_url, report_ids });
   if (!result.ok) return res.status(502).json({ error: result.error });
-  res.json({ ok: true });
+  res.json({ results: result.results });
 });
 
 // 版面自訂：scope='default'（全站預設，僅 admin 可寫）或 'mine'（個人版面，任何登入者可寫自己的）。
