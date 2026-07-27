@@ -458,7 +458,15 @@
   }
 
   // custom_<id> 卡片渲染邏輯（與 renderCustom() 頁籤共用同一份指標運算），
-  // fromOverview=true 時卡片加 wide class 維持與趨勢圖一致的視覺寬度
+  // fromOverview=true 時卡片加 wide class 維持與趨勢圖一致的視覺寬度。
+  //
+  // 單指標報表（metrics.length <= 1）：完全沿用舊版行為，直接呼叫一次 Cards.chartCard()，
+  // DOM 形狀、id/cid、localStorage 圖表類型記憶 key 皆與改版前逐位元組相同，不需任何遷移。
+  //
+  // 多指標報表（metrics.length > 1）：改為「小圖群組」— 每個指標各自一張獨立 Y 軸自動縮放
+  // 的小卡（不再共用一個 Y 軸把量級小的指標壓到底部看不見），外層包一個 wrapper 作為
+  // initSortable() 唯一認得的「直接子節點」，data-cid 沿用舊版單一 cid（custom_<id>），
+  // 讓拖拉排序記憶／總覽「編輯版面」勾選清單都仍把整份報表視為一個項目，不會被拆成 N 筆。
   function renderCustomCard(rep, el, fromOverview) {
     const axis = dateAxis(state.from, state.to);
     const series = rep.config.metrics.map(m => metricSeries(state.data, m, axis));
@@ -470,26 +478,81 @@
                   series: rep.config.metrics.map(m => metricSeries(state.cmpData, m, cAxis)) };
     }
     const isAdminUser = state.me?.role === 'admin';
-    Cards.chartCard({
-      id: fromOverview ? `ov_custom_${rep.id}` : `custom_${rep.id}`,
-      cid: `custom_${rep.id}`, title: rep.name, el, wide: true,
-      types: ['line', 'smooth', 'bar', 'pie'], defaultType: rep.config.type,
-      datasets: { labels: axis.map(d => d.slice(5)), series },
-      compare,
-      exp: {
-        filename: `${rep.name}_${state.from}_${state.to}`,
-        fields: [{ key: 'date', label: '日期' }, ...series.map((s, i) => ({ key: `m${i}`, label: s.label }))],
-        rows: axis.map((d, ri) => Object.fromEntries(
-          [['date', d], ...series.map((s, i) => [`m${i}`, s.data[ri]])])),
-      },
-      actions: (!fromOverview && isAdminUser) ? [
-        { label: '編輯', onClick: () => openReportModal(rep) },
-        { label: '刪除', onClick: async () => {
-            if (!confirm(`刪除報表「${rep.name}」？（全部門共用，刪除影響所有人）`)) return;
-            await api(`/api/reports/${rep.id}`, { method: 'DELETE' });
-            await loadReports(); renderCustom();
-          } },
-      ] : [],
+
+    if (rep.config.metrics.length <= 1) {
+      Cards.chartCard({
+        id: fromOverview ? `ov_custom_${rep.id}` : `custom_${rep.id}`,
+        cid: `custom_${rep.id}`, title: rep.name, el, wide: true,
+        types: ['line', 'smooth', 'bar', 'pie'], defaultType: rep.config.type,
+        datasets: { labels: axis.map(d => d.slice(5)), series },
+        compare,
+        exp: {
+          filename: `${rep.name}_${state.from}_${state.to}`,
+          fields: [{ key: 'date', label: '日期' }, ...series.map((s, i) => ({ key: `m${i}`, label: s.label }))],
+          rows: axis.map((d, ri) => Object.fromEntries(
+            [['date', d], ...series.map((s, i) => [`m${i}`, s.data[ri]])])),
+        },
+        actions: (!fromOverview && isAdminUser) ? [
+          { label: '編輯', onClick: () => openReportModal(rep) },
+          { label: '刪除', onClick: async () => {
+              if (!confirm(`刪除報表「${rep.name}」？（全部門共用，刪除影響所有人）`)) return;
+              await api(`/api/reports/${rep.id}`, { method: 'DELETE' });
+              await loadReports(); renderCustom();
+            } },
+        ] : [],
+      });
+      return;
+    }
+
+    const group = document.createElement('div');
+    group.className = 'custom-group';
+    group.dataset.cid = `custom_${rep.id}`;
+
+    const head = document.createElement('div');
+    head.className = 'card-head custom-group-head';
+    head.innerHTML = `<h2>${esc(rep.name)}</h2>`;
+    if (!fromOverview && isAdminUser) {
+      const act = document.createElement('span');
+      act.className = 'card-actions';
+      const editBtn = document.createElement('button');
+      editBtn.textContent = '編輯';
+      editBtn.onclick = () => openReportModal(rep);
+      const delBtn = document.createElement('button');
+      delBtn.textContent = '刪除';
+      delBtn.onclick = async () => {
+        if (!confirm(`刪除報表「${rep.name}」？（全部門共用，刪除影響所有人）`)) return;
+        await api(`/api/reports/${rep.id}`, { method: 'DELETE' });
+        await loadReports(); renderCustom();
+      };
+      act.appendChild(editBtn); act.appendChild(delBtn);
+      head.appendChild(act);
+    }
+    group.appendChild(head);
+
+    const grid = document.createElement('div');
+    grid.className = 'custom-group-grid';
+    group.appendChild(grid);
+    el.appendChild(group);
+
+    rep.config.metrics.forEach((m, i) => {
+      const mCompare = compare ? { labels: compare.labels, series: [compare.series[i]] } : null;
+      Cards.chartCard({
+        id: `${fromOverview ? 'ov_' : ''}custom_${rep.id}_m${i}`,
+        title: series[i].label, el: grid,
+        types: ['line', 'smooth', 'bar', 'pie'], defaultType: rep.config.type,
+        datasets: { labels: axis.map(d => d.slice(5)), series: [series[i]] },
+        compare: mCompare,
+        exp: {
+          filename: `${rep.name}_${series[i].label}_${state.from}_${state.to}`,
+          fields: [{ key: 'date', label: '日期' }, { key: 'value', label: series[i].label },
+                   ...(mCompare ? [{ key: 'valueCmp', label: `${series[i].label}（比較）` }] : [])],
+          rows: axis.map((d, ri) => ({
+            date: d, value: series[i].data[ri],
+            ...(mCompare ? { valueCmp: mCompare.series[0].data[ri] ?? '' } : {}),
+          })),
+        },
+        actions: [],
+      });
     });
   }
 

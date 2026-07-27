@@ -152,6 +152,14 @@ main { padding: 20px; }
 #add-report-btn { padding: 10px 20px; border: 1px dashed var(--c-dashed); border-radius: 12px;
   background: var(--c-card); cursor: pointer; font-size: 14px; color: var(--c-text-soft); }
 
+/* 多指標自訂報表「小圖群組」：每個指標各自一張獨立 Y 軸小卡（見 app.js renderCustomCard），
+   group 本身是 Sortable 唯一認得的直接子節點，需佔滿整行寬度（同 .card.wide 的效果，
+   但 group 不是 .card，故另立規則），內部 grid 讓小卡依畫面寬度自動排列/換行 */
+.custom-group { grid-column: 1 / -1; }
+.custom-group-head { background: var(--c-card); border-radius: 12px; padding: 12px 16px;
+  box-shadow: 0 1px 4px var(--c-shadow); margin-bottom: 12px; }
+.custom-group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+
 /* 帳號管理／設定頁：一般 HTML 表格＋表單，不套用 Cards.* 卡片機制 */
 #page-users table, #page-settings_password table { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--c-card); border-radius: 12px; overflow: hidden; }
 #page-users th, #page-users td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--c-border-lighter); }

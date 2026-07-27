@@ -484,6 +484,206 @@ async function main() {
       );
     });
 
+    // i1. 自訂報表「小圖群組」（R3d：多指標報表拆成各自 Y 軸自動縮放的小圖）：
+    // 透過既有 /api/reports API 建立測試用的多指標／單指標報表（DATABASE_URL 指向與其他
+    // 服務共用的 Zeabur 正式 PostgreSQL，非拋棄式測試庫，見 CLAUDE.md，故全程測試完畢
+    // 必須在下方清理步驟刪除，不留下全部門可見的假報表）。
+    let multiReportId = null;
+    let singleReportId = null;
+    await check('自訂報表：建立測試用多指標／單指標報表', async () => {
+      const token = await page.evaluate(() => localStorage.getItem('traf_token'));
+      if (!token) throw new Error('找不到 traf_token');
+      const createReport = async (name, metrics, type) => {
+        const res = await page.evaluate(async (t, body) => {
+          const r = await fetch('/api/reports', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` },
+            body: JSON.stringify(body),
+          });
+          return { status: r.status, body: await r.json().catch(() => null) };
+        }, token, { name, config: { type, metrics } });
+        if (res.status !== 200 || !res.body || !res.body.report) {
+          throw new Error(`建立報表「${name}」失敗：status=${res.status}, body=${JSON.stringify(res.body)}`);
+        }
+        return res.body.report.id;
+      };
+      multiReportId = await createReport('__smoke_multi_metric__', [
+        { source: 'fb_page_daily', field: 'reach' },
+        { source: 'fb_page_daily', field: 'engagement' },
+        { source: 'ads_daily', field: 'spend' },
+      ], 'smooth');
+      singleReportId = await createReport('__smoke_single_metric__', [
+        { source: 'fb_page_daily', field: 'reach' },
+      ], 'smooth');
+
+      // 建表用的是直接打 API，state.reports 快取不會自動更新（loadReports() 只在登入／
+      // 精靈存檔／刪除流程中被呼叫），重新整理整頁走一次 enter() 最單純，也與本檔其他
+      // 需要「讓後端變更反映到前端」的步驟（外觀主題、圖表類型記憶）用同一套慣例。
+      await page.goto(BASE_URL, { waitUntil: 'networkidle0' });
+      await page.waitForFunction(() => {
+        const main = document.querySelector('#main');
+        const mainVisible = main && getComputedStyle(main).display !== 'none';
+        const loginVisible = getComputedStyle(document.querySelector('#login-overlay')).display !== 'none';
+        return mainVisible || loginVisible;
+      }, { timeout: 10000 });
+      const alreadyIn = await page.evaluate(() => {
+        const main = document.querySelector('#main');
+        return Boolean(main && getComputedStyle(main).display !== 'none');
+      });
+      if (!alreadyIn) {
+        await page.waitForSelector('#login-username', { timeout: 5000 });
+        await page.type('#login-username', ADMIN_USERNAME);
+        await page.type('#login-password', ADMIN_SECRET);
+        await page.click('#login-form button[type="submit"]');
+      }
+      await page.waitForFunction(() => {
+        const main = document.querySelector('#main');
+        return main && getComputedStyle(main).display !== 'none';
+      }, { timeout: 10000 });
+    });
+
+    await check('自訂報表：多指標報表渲染為多張小圖，歸在同一個群組（單一 data-cid，編輯/刪除鈕僅一份）', async () => {
+      await page.click('.menu-item[data-page="custom"]');
+      await page.waitForFunction(
+        () => document.querySelector('#page-custom')?.classList.contains('active'),
+        { timeout: 5000 },
+      );
+      await page.waitForFunction(
+        (cid) => Boolean(document.querySelector(`#page-custom [data-cid="${cid}"]`)),
+        { timeout: 10000 }, `custom_${multiReportId}`,
+      );
+      const info = await page.evaluate((cid) => {
+        const pageEl = document.querySelector('#page-custom');
+        const group = pageEl.querySelector(`[data-cid="${cid}"]`);
+        if (!group) return null;
+        return {
+          isDirectChild: group.parentElement === pageEl,
+          isGroupNotPlainCard: group.classList.contains('custom-group') && !group.classList.contains('card'),
+          duplicateCidCount: pageEl.querySelectorAll(`[data-cid="${cid}"]`).length,
+          canvasCount: group.querySelectorAll('canvas').length,
+          headCount: group.querySelectorAll(':scope > .card-head').length,
+          actionBtnCount: group.querySelectorAll(':scope > .card-head .card-actions button').length,
+        };
+      }, `custom_${multiReportId}`);
+      if (!info) throw new Error('找不到多指標報表的 group wrapper（data-cid 對應不到任何元素）');
+      if (!info.isDirectChild) throw new Error('多指標報表的 group wrapper 應為 #page-custom 的直接子節點');
+      if (info.duplicateCidCount !== 1) throw new Error(`data-cid 應只出現一次，實際 ${info.duplicateCidCount}（initSortable 依賴此唯一性）`);
+      if (!info.isGroupNotPlainCard) throw new Error('多指標報表的 wrapper 應為 .custom-group（非普通 .card）');
+      if (info.canvasCount !== 3) throw new Error(`3 個指標應渲染 3 張小圖（3 個 canvas），實際 ${info.canvasCount}`);
+      if (info.headCount !== 1) throw new Error(`group 自己的表頭（直接子層 .card-head）應只有 1 個，實際 ${info.headCount}`);
+      if (info.actionBtnCount !== 2) throw new Error(`編輯/刪除鈕應各一個（共 2 個），實際 ${info.actionBtnCount}（若 >2 代表按鈕被複製到每張小圖上）`);
+    });
+
+    await check('自訂報表：單指標報表仍渲染為單一 .card + 一張畫布（沿用改版前行為，無 DOM 遷移）', async () => {
+      const info = await page.evaluate((cid) => {
+        const pageEl = document.querySelector('#page-custom');
+        const card = pageEl.querySelector(`[data-cid="${cid}"]`);
+        if (!card) return null;
+        return {
+          isDirectChild: card.parentElement === pageEl,
+          isPlainCard: card.classList.contains('card') && !card.classList.contains('custom-group'),
+          canvasCount: card.querySelectorAll('canvas').length,
+        };
+      }, `custom_${singleReportId}`);
+      if (!info) throw new Error('找不到單指標報表卡片');
+      if (!info.isDirectChild) throw new Error('單指標報表卡片應為 #page-custom 的直接子節點');
+      if (!info.isPlainCard) throw new Error('單指標報表應仍是普通 .card（不應套用 .custom-group 群組樣式）');
+      if (info.canvasCount !== 1) throw new Error(`單指標報表應只有 1 張畫布，實際 ${info.canvasCount}`);
+    });
+
+    // i1b. 拖拉排序：真正在瀏覽器內做一次原生拖曳（非僅憑推論），確認從「巢狀在群組內、
+    // 非群組自身表頭」的小圖 .card-head 把手拖動，移動的是整個群組（data-cid 不重複也不消失、
+    // 群組內小圖數量不變），而不是把單一小圖獨立拖走；並確認 reorder 後 reload 仍保留順序。
+    // 背景：initSortable 的 handle 選項 '.card-head, .kpi-label' 對巢狀小圖的表頭也會命中，
+    // SortableJS 內部用 closest(target, handle) 判斷「是否從合法把手開始拖」，
+    // 再另外用 closest(target, draggable='>*') 判斷「實際要移動哪個直接子節點」，
+    // 兩者不必是同一個元素——這正是本檢查要在真實瀏覽器中驗證、而非只憑閱讀原始碼推論的地方。
+    await check('拖拉排序：從小圖巢狀表頭拖動會移動整個多指標群組，且重新整理後順序保留', async () => {
+      // 暫時拉高視窗高度，確保群組、單指標卡片與拖曳目標（清單最後一個直接子節點）
+      // 全部落在同一個可視視窗內——CDP 的原生拖曳事件對視窗外座標不可靠，用 scroll
+      // 反而會讓拖曳來源與目標分處不同捲動位置，不如直接給足高度。結束後照 RWD 檢查
+      // 的慣例改回原本的 1280×900。
+      await page.setViewport({ width: 1280, height: 1600 });
+      await page.setDragInterception(true);
+      const cid = `custom_${multiReportId}`;
+      const orderBefore = await page.evaluate(
+        () => [...document.querySelectorAll('#page-custom > [data-cid]')].map(c => c.dataset.cid),
+      );
+      if (orderBefore.length < 2) throw new Error(`#page-custom 直接子節點數不足以測試排序：${orderBefore.length}`);
+      if (!orderBefore.includes(cid)) throw new Error('找不到多指標報表在排序清單中的位置');
+
+      const handle = await page.$(`#page-custom [data-cid="${cid}"] .custom-group-grid .card-head`);
+      if (!handle) throw new Error('找不到多指標群組內小圖的 .card-head 把手');
+      const handleBox = await handle.boundingBox();
+      const lastEl = await page.evaluateHandle(() => document.querySelector('#page-custom').lastElementChild);
+      const lastBox = await lastEl.asElement().boundingBox();
+      if (!handleBox || !lastBox) throw new Error('拖拉來源或目標座標取得失敗（元素可能不在可視範圍內）');
+
+      const start = { x: handleBox.x + handleBox.width / 2, y: handleBox.y + handleBox.height / 2 };
+      const target = { x: lastBox.x + lastBox.width / 2, y: lastBox.y + lastBox.height - 8 };
+      await page.mouse.dragAndDrop(start, target);
+      await sleep(300);
+
+      const orderAfter = await page.evaluate(
+        () => [...document.querySelectorAll('#page-custom > [data-cid]')].map(c => c.dataset.cid),
+      );
+      const dupAfter = orderAfter.filter(c => c === cid).length;
+      if (dupAfter !== 1) throw new Error(`拖動後 data-cid 應仍只出現一次，實際出現 ${dupAfter} 次`);
+      if (orderAfter.join(',') === orderBefore.join(',')) {
+        throw new Error(`拖動後 #page-custom 直接子節點順序未改變（可能只移動了巢狀小圖，而非整個群組）：${orderAfter.join(',')}`);
+      }
+      const canvasCountAfter = await page.evaluate(
+        cid => document.querySelector(`#page-custom [data-cid="${cid}"] .custom-group-grid`)?.querySelectorAll('canvas').length,
+        cid,
+      );
+      if (canvasCountAfter !== 3) throw new Error(`拖動後群組內小圖數量應仍為 3（整體移動、無小圖被拆散），實際 ${canvasCountAfter}`);
+
+      const savedOrder = await page.evaluate(() => JSON.parse(localStorage.getItem('traf_card_order_custom') || '[]'));
+      if (savedOrder.join(',') !== orderAfter.join(',')) {
+        throw new Error(`localStorage 排序記憶與畫面實際順序不一致：saved=${JSON.stringify(savedOrder)}, dom=${JSON.stringify(orderAfter)}`);
+      }
+
+      // 重新整理頁面，確認 initSortable 依 localStorage 記憶還原成拖動後的順序
+      await page.goto(BASE_URL, { waitUntil: 'networkidle0' });
+      await page.waitForFunction(() => {
+        const main = document.querySelector('#main');
+        return main && getComputedStyle(main).display !== 'none';
+      }, { timeout: 10000 });
+      await page.click('.menu-item[data-page="custom"]');
+      await page.waitForFunction(
+        () => document.querySelector('#page-custom')?.classList.contains('active'),
+        { timeout: 5000 },
+      );
+      await page.waitForFunction(
+        (cid) => Boolean(document.querySelector(`#page-custom [data-cid="${cid}"]`)),
+        { timeout: 10000 }, cid,
+      );
+      const orderReloaded = await page.evaluate(
+        () => [...document.querySelectorAll('#page-custom > [data-cid]')].map(c => c.dataset.cid),
+      );
+      if (orderReloaded.join(',') !== orderAfter.join(',')) {
+        throw new Error(`重新整理後順序未保留：預期 ${JSON.stringify(orderAfter)}，實際 ${JSON.stringify(orderReloaded)}`);
+      }
+      await page.setDragInterception(false);
+      await page.setViewport({ width: 1280, height: 900 });
+    });
+
+    // 清理：刪除本輪測試建立的多指標／單指標報表（全部門共用，留著會污染正式資料）
+    await check('清理：刪除測試用的多指標／單指標報表', async () => {
+      const token = await page.evaluate(() => localStorage.getItem('traf_token'));
+      if (!token) throw new Error('找不到 traf_token，無法呼叫清理 API');
+      for (const id of [multiReportId, singleReportId]) {
+        if (!id) continue;
+        const res = await page.evaluate(async (t, rid) => {
+          const r = await fetch(`/api/reports/${rid}`, { method: 'DELETE', headers: { Authorization: `Bearer ${t}` } });
+          return { status: r.status, body: await r.json().catch(() => null) };
+        }, token, id);
+        if (res.status !== 200 || !res.body || res.body.ok !== true) {
+          throw new Error(`刪除報表 id=${id} 失敗：status=${res.status}, body=${JSON.stringify(res.body)}`);
+        }
+      }
+    });
+
     // i2. 帳號管理（admin 專屬）：選單項可見、點擊渲染表格、新增彈窗開關不送出
     await check('帳號管理：admin 可見選單項，點擊渲染表格', async () => {
       const usersMenuVisible = await isComputedVisible(page, '#menu-users');
