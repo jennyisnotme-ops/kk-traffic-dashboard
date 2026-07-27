@@ -82,9 +82,9 @@ app.get('/health', async (req, res) => {
 
 const { findUserByCreds, createSession, destroySession, getToken,
   requireAuth, requireAdmin } = require('./lib/auth');
-const { runAll, scheduleDaily, backfill } = require('./jobs/daily');
+const { runAll, scheduleDaily, backfill, runDigestOnce } = require('./jobs/daily');
 const XLSX = require('xlsx');
-const { validateExportPayload, validateReportConfig, validateNewUser, validateLayoutCards, ALL_PAGES, validateThemeColor } = require('./lib/validators');
+const { validateExportPayload, validateReportConfig, validateNewUser, validateLayoutCards, ALL_PAGES, validateThemeColor, validateDigestSettings } = require('./lib/validators');
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -349,6 +349,42 @@ app.delete('/api/reports/:id', requireAuth, requireAdmin, async (req, res) => {
     await pool.query('DELETE FROM traf_reports WHERE id=$1', [id]);
     res.json({ ok: true });
   } catch (err) { console.error('[api/reports]', err); res.status(500).json({ error: '伺服器錯誤' }); }
+});
+
+// 每日 Discord 摘要設定（僅 admin）
+app.get('/api/digest-settings', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM traf_daily_digest WHERE id = 1');
+    res.json({ settings: rows[0] });
+  } catch (err) { console.error('[api/digest-settings]', err); res.status(500).json({ error: '伺服器錯誤' }); }
+});
+
+app.put('/api/digest-settings', requireAuth, requireAdmin, async (req, res) => {
+  const v = validateDigestSettings(req.body);
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  const { enabled, webhook_url, report_id } = req.body;
+  try {
+    if (report_id) {
+      const { rowCount } = await pool.query('SELECT 1 FROM traf_reports WHERE id = $1', [report_id]);
+      if (!rowCount) return res.status(400).json({ error: '指定的報表不存在' });
+    }
+    const { rows } = await pool.query(
+      `UPDATE traf_daily_digest SET enabled=$1, webhook_url=$2, report_id=$3, updated_at=now()
+        WHERE id = 1 RETURNING *`,
+      [enabled, webhook_url || null, report_id || null]);
+    res.json({ settings: rows[0] });
+  } catch (err) { console.error('[api/digest-settings]', err); res.status(500).json({ error: '伺服器錯誤' }); }
+});
+
+// 測試發送：override 模式，只跑管線不動 traf_daily_digest（見 jobs/daily.js runDigestOnce）
+app.post('/api/digest-settings/test', requireAuth, requireAdmin, async (req, res) => {
+  const { webhook_url, report_id } = req.body || {};
+  if (typeof webhook_url !== 'string' || !/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\//.test(webhook_url))
+    return res.status(400).json({ error: 'webhook_url 格式不合法' });
+  if (!Number.isInteger(report_id)) return res.status(400).json({ error: '請先選擇一份報表' });
+  const result = await runDigestOnce(pool, { webhook_url, report_id });
+  if (!result.ok) return res.status(502).json({ error: result.error });
+  res.json({ ok: true });
 });
 
 // 版面自訂：scope='default'（全站預設，僅 admin 可寫）或 'mine'（個人版面，任何登入者可寫自己的）。
